@@ -17,24 +17,20 @@ RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-py39_4.12.0-Linu
     rm Miniconda3-py39_4.12.0-Linux-x86_64.sh
 
 ENV PATH="/opt/conda/bin:$PATH"
-# --- Create Python environment ---
+# COPY environment.yml .
+# RUN conda install -y -c conda-forge mamba
+# RUN mamba env update -n base -f environment.yml
+# RUN conda clean -afy
+# RUN conda install -y -c conda-forge tensorflow=2.6.0 python=3.9
 RUN conda install -y -c conda-forge python=3.9 && conda clean -afy
-
-# --- Install fixed NumPy version ---
-RUN pip install numpy
-
-# --- Install PyTorch 2.7.0 + CUDA 12.8 ---
-RUN pip install torch==2.7.0+cu128 torchvision==0.22.0+cu128 torchaudio==2.7.0+cu128 --index-url https://download.pytorch.org/whl/cu128
-
-# --- Install compatible torch-scatter ---
-RUN pip install torch-scatter -f https://data.pyg.org/whl/torch-2.7.0+cu128.html
-
-# --- Additional packages ---
-RUN pip install hydra-core numba spconv-cu120 \
-    opencv-python nuscenes-devkit protobuf==3.20.* \
-    scipy matplotlib
-
+RUN pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+RUN pip install torch-scatter -f https://data.pyg.org/whl/torch-2.2.0+cu128.html
+RUN pip install hydra-core numba 
+RUN pip install spconv-cu120
+RUN pip install opencv-python
+RUN pip install nuscenes-devkit
+RUN pip install protobuf==3.20.*
 RUN pip install numpy==1.24.4
-
-# Optional: set working directory
-# WORKDIR /workspace
+# RUN pip install --no-cache-dir tensorflow==2.6.0
+# RUN conda install -y -c conda-forge tensorflow==2.6.0
+# RUN pip install waymo-open-dataset-tf-2-6-0

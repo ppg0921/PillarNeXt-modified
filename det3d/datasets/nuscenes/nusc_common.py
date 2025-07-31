@@ -308,7 +308,7 @@ def get_boxes(nusc, sample_data_token, selected_anntokens = None):
     return box_list
 
 
-def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, **kwargs):
+def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=2, **kwargs):
     from nuscenes.utils.geometry_utils import transform_matrix
 
     train_nusc_infos = []
@@ -440,7 +440,7 @@ def quaternion_yaw(q: Quaternion) -> float:
     return np.arctan2(v[1], v[0])
 
 
-def create_nuscenes_infos(root_path, version="v1.0-trainval", nsweeps=10):
+def create_nuscenes_infos(root_path, version="v1.0-trainval", nsweeps=2):
     nusc = NuScenes(version=version, dataroot=root_path, verbose=True)
     available_vers = ["v1.0-trainval", "v1.0-test", "v1.0-mini"]
     assert version in available_vers

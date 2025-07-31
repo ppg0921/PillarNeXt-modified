@@ -133,6 +133,8 @@ class Trainer(object):
 
         for i, data_batch in enumerate(self.train_dataloader):
             self.inner_iter = i  # iteration in current epoch
+            if self.inner_iter % 5 == 0:
+                print(f"Epoch {self.epoch + 1}, Iteration {self.inner_iter + 1}/{len(self.train_dataloader)}") 
             self.train_iter(data_batch)
 
         self.epoch += 1
@@ -186,6 +188,7 @@ class Trainer(object):
     def fit(self):
         self.logger.info("max: %d epochs", self.max_epochs)
         while self.epoch < self.max_epochs:
+            self.logger.info(f"Epoch {self.epoch + 1}/{self.max_epochs}")
             self.train_epoch()
             if (self.eval_every_nepochs > 0 and self.epoch % self.eval_every_nepochs == 0) or \
                (self.eval_epochs is not None and self.epoch in self.eval_epochs):

@@ -72,7 +72,11 @@ class PillarNet(nn.Module):
                  voxel_size,
                  pc_range):
         super().__init__()
+        print("[PillarNet INIT] voxel_size:", voxel_size)
+        print("[PillarNet INIT] np.array(voxel_size):", np.array(voxel_size))
+
         self.voxel_size = np.array(voxel_size)
+        print("[PillarNet INIT] self.voxel_size:", self.voxel_size)
         self.pc_range = np.array(pc_range)
 
     def forward(self, points):
@@ -84,21 +88,46 @@ class PillarNet(nn.Module):
         dtype = points.dtype
 
         # discard out of range points
-        grid_size = (self.pc_range[3:] - self.pc_range[:3]
+        grid_size = (self.pc_range[3:] - self.pc_range[:3]  #upper - lower bound
                      )/self.voxel_size  # x,  y, z
         grid_size = np.round(grid_size, 0, grid_size).astype(np.int64)
+        
+        # print("[VOXEL CHECK] self.voxel_size dtype:", self.voxel_size.dtype)
+        # print("[VOXEL CHECK] self.voxel_size:", self.voxel_size)
+        # print("[VOXEL CHECK] voxel_size after torch.from_numpy:", torch.from_numpy(self.voxel_size))
+        
+        # voxel_size = torch.from_numpy(
+        #     self.voxel_size).type_as(points).to(device)
+        voxel_size = torch.tensor(self.voxel_size.tolist(), dtype=torch.float32, device='cpu')
+        # print("[DEBUG] voxel_size:", voxel_size)
+        # import sys; sys.exit(0)
 
-        voxel_size = torch.from_numpy(
-            self.voxel_size).type_as(points).to(device)
-        pc_range = torch.from_numpy(self.pc_range).type_as(points).to(device)
+        voxel_size = torch.tensor(self.voxel_size.tolist(), dtype=points.dtype, device=device)
+        pc_range = torch.tensor(self.pc_range.tolist(), dtype=points.dtype, device=device)
+
+        # print("[VOXEL CHECK] voxel_size after to(device):", voxel_size)
+        # print("[VOXEL CHECK] points dtype:", points.dtype)
+        # pc_range = torch.from_numpy(self.pc_range).type_as(points).to(device)
 
         points_coords = (
             points[:, 1:4] - pc_range[:3].view(-1, 3)) / voxel_size.view(-1, 3)   # x, y, z
 
+        # print("[VOXEL CHECK] grid_size:", grid_size)
+        # print("[VOXEL CHECK] points_coords[:5]:", points_coords[:5].cpu().tolist())
         mask = reduce(torch.logical_and, (points_coords[:, 0] >= 0,
                                           points_coords[:, 0] < grid_size[0],
                                           points_coords[:, 1] >= 0,
                                           points_coords[:, 1] < grid_size[1]))
+        
+        # print("[VOXEL CHECK] grid_size:", grid_size)
+        # print("[VOXEL CHECK] pc_range[:3]:", pc_range[:3])
+        # print("[VOXEL CHECK] voxel_size:", voxel_size)
+
+        # print("[VOXEL CHECK] points_coords[:5]:", points_coords[:5])
+        # print("[VOXEL CHECK] Valid X range:", points_coords[:, 0].min(), "→", points_coords[:, 0].max())
+        # print("[VOXEL CHECK] Valid Y range:", points_coords[:, 1].min(), "→", points_coords[:, 1].max())
+        # print("[VOXEL CHECK] mask.sum():", mask.sum())
+
 
         points = points[mask]
         points_coords = points_coords[mask]
@@ -172,7 +201,36 @@ class PillarFeatureNet(nn.Module):
         self.voxelization = PillarNet(num_input_features, voxel_size, pc_range)
 
     def forward(self, points):
+        # print("[VOXEL DEBUG] Before voxelization")
+        # print(f" - points[:,1:4] min: {points[:,1:4].min(dim=0).values}")
+        # print(f" - points[:,1:4] max: {points[:,1:4].max(dim=0).values}")
+        # print("[VOXEL DEBUG] Before voxelization")
+        # print(f" - Original shape: {points.shape}")
+        # print(f" - points[:3]: {points[:3].cpu().tolist()}")
+        # print(f" - points[-3:]: {points[-3:].cpu().tolist()}")
+        # # for i in range(10):
+        # #     print(f"Point {i}: batch_id = {points[i, 0].item():.20f}")
+
+
+        # # Then inspect xyz only from the input
+        # xyz = points[:, 1:4]
+        # print(f" - XYZ min: {xyz.min(dim=0).values}")
+        # print(f" - XYZ max: {xyz.max(dim=0).values}")
+        
+        # print("[POINT CLOUD SAMPLES]")
+        # print(points[:5].cpu().tolist())
+        # print(points[:3])
+        
         features, coords, unq_inv, grid_size = self.voxelization(points)
+
+        # print("[VOXEL DEBUG]")
+        # print(f" - Input points: {points.shape}")
+        # print(f" - Output features: {features.shape if isinstance(features, torch.Tensor) else len(features)}")
+        # print(f" - Output coords: {coords.shape if isinstance(coords, torch.Tensor) else len(coords)}")
+        # print(f" - Output grid size: {grid_size}")
+
+        # import sys; sys.exit(0)
+
         # Forward pass through PFNLayers
         for pfn in self.pfn_layers:
             features = pfn(features, unq_inv)  # num_points, dim_feat

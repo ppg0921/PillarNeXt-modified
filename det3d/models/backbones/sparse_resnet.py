@@ -60,6 +60,9 @@ class SparseResNet(spconv.pytorch.SparseModule):
 
     def forward(self, pillar_features, coors, input_shape):
         batch_size = len(torch.unique(coors[:, 0]))
+        # —– SPCONV DEBUG —–
+        # print(f"[SPARSE DEBUG] features.shape={pillar_features.shape}, indices.shape={coors.shape}, "
+        #       f"spatial_shape={input_shape}, batch_size={batch_size}")
         x = spconv.pytorch.SparseConvTensor(
             pillar_features, coors, input_shape, batch_size)
         for i in range(len(self.blocks)):

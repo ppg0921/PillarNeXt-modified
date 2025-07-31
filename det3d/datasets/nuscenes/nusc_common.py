@@ -308,7 +308,7 @@ def get_boxes(nusc, sample_data_token, selected_anntokens = None):
     return box_list
 
 
-def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=2, **kwargs):
+def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, **kwargs):
     from nuscenes.utils.geometry_utils import transform_matrix
 
     train_nusc_infos = []

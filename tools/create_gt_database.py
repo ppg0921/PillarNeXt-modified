@@ -157,7 +157,7 @@ if __name__ == "__main__":
     create_groundtruth_database(
         dataset_name="NUSC",
         data_path='/mnt/sda/jinyu/datasets/nuscenes/',
-        info_path='infos_train_10sweeps_withvelo_filterZero.pkl',
+        info_path='infos_train_2sweeps_withvelo_filterZero.pkl',
         nsweeps=10
     )
     '''

@@ -11,7 +11,7 @@ from nuscenes.utils import splits
 from nuscenes.utils.data_classes import Box
 from nuscenes.eval.detection.config import config_factory
 from nuscenes.eval.detection.evaluate import NuScenesEval
-from nuscenes.eval.detection.loaders import load_gt, load_prediction
+from nuscenes.eval.detection.common import load_gt, load_prediction
 import fire
 import os
 

@@ -14,10 +14,8 @@ from nuscenes.eval.detection.config import config_factory
 from nuscenes.eval.detection.evaluate import NuScenesEval
 from nuscenes.eval.common.loaders import load_gt, load_prediction
 from nuscenes.eval.common.data_classes import EvalBoxes
-from nuscenes.eval.common.loaders import (
-    load_prediction_of_sample_tokens,
-    load_gt_of_sample_tokens,
-)
+from nuscenes.eval.common.loaders import load_gt_of_sample_tokens
+
 import fire
 import os
 

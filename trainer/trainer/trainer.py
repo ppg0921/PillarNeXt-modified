@@ -136,6 +136,9 @@ class Trainer(object):
             if self.inner_iter % 5 == 0:
                 print(f"Epoch {self.epoch + 1}, Iteration {self.inner_iter + 1}/{len(self.train_dataloader)}") 
             self.train_iter(data_batch)
+            if self.inner_iter >= 3:
+                print("[DEBUG] Exiting after 3 iterations for testing purposes")
+                break
 
         self.epoch += 1
         if self.rank == 0:

@@ -9,7 +9,7 @@ from pyquaternion import Quaternion
 from nuscenes import NuScenes
 from nuscenes.utils import splits
 from nuscenes.utils.data_classes import Box
-from nuscenes.eval.detection.data_classes import DetectionBox
+from nuscenes.eval.detection.data_classes import DetectionBox, EvalBoxes
 from nuscenes.eval.detection.config import config_factory
 from nuscenes.eval.detection.evaluate import NuScenesEval
 from nuscenes.eval.common.loaders import load_gt, load_prediction
@@ -503,10 +503,16 @@ def eval_main(nusc, eval_version, res_path, eval_set, output_dir):
 
     # Load and filter GT
     gt_boxes = load_gt(nusc, eval_set, DetectionBox, verbose=True)
-    gt_boxes = gt_boxes[gt_boxes.sample_tokens.isin(pred_tokens)]   # filter out Ground Truth that are in the same key frames as predictions
+    gt_boxes = EvalBoxes(boxes={k: v for k, v in gt_boxes.boxes.items() if k in pred_tokens})
+    # filter out Ground Truth that are in the same key frames as predictions
 
     print(f"[DEBUG] Running evaluation on {len(gt_boxes)} GT samples and {len(pred_boxes)} predictions")
 
+    for sample_token in list(pred_boxes.boxes.keys()):
+        if len(pred_boxes.boxes[sample_token]) > 500:
+            pred_boxes.boxes[sample_token] = pred_boxes.boxes[sample_token][:500]
+
+    
     nusc_eval = NuScenesEval(
         nusc,
         config=cfg,

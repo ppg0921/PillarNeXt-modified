@@ -87,6 +87,8 @@ data:
         voxel_size: ${model.reader.voxel_size}
         out_size_factor: [4, 4, 4, 4, 4, 4]
     resampling: True
+    version: v1.0-trainval
   val_dataset:
     class_names: ${_tasks}
+    version: ${data.train_dataset.version}
 

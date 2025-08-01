@@ -12,6 +12,7 @@ from nuscenes.utils.data_classes import Box
 from nuscenes.eval.detection.config import config_factory
 from nuscenes.eval.detection.evaluate import NuScenesEval
 import fire
+import os
 
 general_to_detection = {
     "human.pedestrian.adult": "pedestrian",
@@ -336,6 +337,10 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, **kwargs):
             Quaternion(ref_pose_rec["rotation"]),
             inverse=True,
         )
+        
+        lidar_file = os.path.join(nusc.dataroot, ref_sd_rec['filename'])
+        if not os.path.exists(lidar_file):
+            continue
 
         info = {
             "lidar_path": ref_sd_rec['filename'],
@@ -354,6 +359,10 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, **kwargs):
                 break
             else:
                 curr_sd_rec = nusc.get("sample_data", curr_sd_rec["prev"])
+                
+                sweep_lidar_file = os.path.join(nusc.dataroot, curr_sd_rec['filename'])
+                if not os.path.exists(sweep_lidar_file):
+                    continue
 
                 # Get past pose
                 current_pose_rec = nusc.get(

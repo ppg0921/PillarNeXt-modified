@@ -16,6 +16,10 @@ from det3d.datasets.nuscenes.nusc_common import (
     eval_main
 )
 
+from nuscenes.eval.detection.config import config_factory
+from nuscenes.eval.detection.loaders import load_gt, load_prediction
+from nuscenes.eval.detection.evaluate import NuScenesEval
+
 
 class NuScenesDataset(BaseDataset):
 

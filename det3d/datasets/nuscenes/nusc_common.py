@@ -9,10 +9,11 @@ from pyquaternion import Quaternion
 from nuscenes import NuScenes
 from nuscenes.utils import splits
 from nuscenes.utils.data_classes import Box
-from nuscenes.eval.detection.data_classes import DetectionBox, EvalBoxes
+from nuscenes.eval.detection.data_classes import DetectionBox
 from nuscenes.eval.detection.config import config_factory
 from nuscenes.eval.detection.evaluate import NuScenesEval
 from nuscenes.eval.common.loaders import load_gt, load_prediction
+from nuscenes.eval.common.data_classes import EvalBoxes
 import fire
 import os
 
@@ -508,9 +509,9 @@ def eval_main(nusc, eval_version, res_path, eval_set, output_dir):
 
     print(f"[DEBUG] Running evaluation on {len(gt_boxes)} GT samples and {len(pred_boxes)} predictions")
 
-    # for sample_token in list(pred_boxes.boxes.keys()):
-    #     if len(pred_boxes.boxes[sample_token]) > 500:
-    #         pred_boxes.boxes[sample_token] = pred_boxes.boxes[sample_token][:500]
+    for sample_token in list(pred_boxes.boxes.keys()):
+        if len(pred_boxes.boxes[sample_token]) > 500:
+            pred_boxes.boxes[sample_token] = pred_boxes.boxes[sample_token][:500]
 
     
     nusc_eval = NuScenesEval(

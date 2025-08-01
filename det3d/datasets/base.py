@@ -44,6 +44,7 @@ class BaseDataset(Dataset):
     def load_infos(self):
         with open(os.path.join(self._root_path, self._info_path), "rb") as f:
             self.infos = pickle.load(f)
+        self._nusc_infos = self.infos
 
     def evaluation(self):
         """Dataset must provide a evaluation function to evaluate model."""

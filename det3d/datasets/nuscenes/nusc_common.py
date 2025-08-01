@@ -9,6 +9,7 @@ from pyquaternion import Quaternion
 from nuscenes import NuScenes
 from nuscenes.utils import splits
 from nuscenes.utils.data_classes import Box
+from nuscenes.eval.detection.data_classes import DetectionBox
 from nuscenes.eval.detection.config import config_factory
 from nuscenes.eval.detection.evaluate import NuScenesEval
 from nuscenes.eval.common.loaders import load_gt, load_prediction
@@ -454,7 +455,7 @@ def create_nuscenes_infos(root_path, version="v1.0-trainval", nsweeps=10):
     nusc = NuScenes(version=version, dataroot=root_path, verbose=True)
     available_vers = ["v1.0-trainval", "v1.0-test", "v1.0-mini"]
     assert version in available_vers
-    if version == "v1.0-trainval":
+    if version == "v1.0-trainval" or version == "v1.0-mini":
         train_scenes = splits.train
         val_scenes = splits.val
     elif version == "v1.0-test":
@@ -497,11 +498,11 @@ def eval_main(nusc, eval_version, res_path, eval_set, output_dir):
     cfg = config_factory(eval_version)
     
     # Load predictions
-    pred_boxes, meta = load_prediction(res_path, cfg.class_names, verbose=True)
+    pred_boxes, meta = load_prediction(res_path, cfg.max_boxes_per_sample, DetectionBox, verbose=True)
     pred_tokens = set(pred_boxes.sample_tokens)     # the set of key frames that has the prediction
 
     # Load and filter GT
-    gt_boxes = load_gt(nusc, eval_set, cfg.class_names, verbose=True)
+    gt_boxes = load_gt(nusc, eval_set, DetectionBox, verbose=True)
     gt_boxes = gt_boxes[gt_boxes.sample_tokens.isin(pred_tokens)]   # filter out Ground Truth that are in the same key frames as predictions
 
     print(f"[DEBUG] Running evaluation on {len(gt_boxes)} GT samples and {len(pred_boxes)} predictions")

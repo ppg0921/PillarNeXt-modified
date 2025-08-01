@@ -47,6 +47,7 @@ class NuScenesDataset(BaseDataset):
 
         if resampling:
             self.cbgs()
+        print(f"[DEBUG] NuScenesDataset initialized with version {self.version}")
 
     def cbgs(self):
         _cls_infos = {name: [] for name in self._class_names}

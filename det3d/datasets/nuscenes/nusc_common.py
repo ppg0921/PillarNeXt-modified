@@ -14,6 +14,10 @@ from nuscenes.eval.detection.config import config_factory
 from nuscenes.eval.detection.evaluate import NuScenesEval
 from nuscenes.eval.common.loaders import load_gt, load_prediction
 from nuscenes.eval.common.data_classes import EvalBoxes
+from nuscenes.eval.common.loaders import (
+    load_prediction_of_sample_tokens,
+    load_gt_of_sample_tokens,
+)
 import fire
 import os
 
@@ -502,9 +506,10 @@ def eval_main(nusc, eval_version, res_path, eval_set, output_dir):
     pred_boxes, meta = load_prediction(res_path, cfg.max_boxes_per_sample, DetectionBox, verbose=True)
     pred_tokens = set(pred_boxes.sample_tokens)     # the set of key frames that has the prediction
 
+    gt_boxes = load_gt_of_sample_tokens(nusc, list(pred_tokens), DetectionBox, verbose=True)
     # Load and filter GT
-    gt_boxes = load_gt(nusc, eval_set, DetectionBox, verbose=True)
-    gt_boxes = EvalBoxes(boxes={k: v for k, v in gt_boxes.boxes.items() if k in pred_tokens})
+    # gt_boxes = load_gt(nusc, eval_set, DetectionBox, verbose=True)
+    # gt_boxes = EvalBoxes(boxes={k: v for k, v in gt_boxes.boxes.items() if k in pred_tokens})
     # filter out Ground Truth that are in the same key frames as predictions
 
     print(f"[DEBUG] Running evaluation on {len(gt_boxes)} GT samples and {len(pred_boxes)} predictions")

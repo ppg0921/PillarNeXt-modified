@@ -16,6 +16,7 @@ from nuscenes.eval.common.loaders import load_gt, load_prediction
 from nuscenes.eval.common.data_classes import EvalBoxes
 from nuscenes.eval.common.loaders import load_gt_of_sample_tokens
 
+
 import fire
 import os
 
@@ -331,6 +332,9 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, **kwargs):
         ref_time = 1e-6 * ref_sd_rec["timestamp"]
 
         ref_boxes = get_boxes(nusc, ref_sd_token)
+        
+        cam_token = sample["data"]["CAM_FRONT"]
+        cam_sd_rec = nusc.get("sample_data", cam_token)
 
         # Homogeneous transform from ego car frame to reference frame
         ref_from_car = transform_matrix(
@@ -349,6 +353,7 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, **kwargs):
 
         info = {
             "lidar_path": ref_sd_rec['filename'],
+            "cam_path": cam_sd_rec['filename'],
             "token": sample["token"],
             "sweeps": [],
             "ref_from_car": ref_from_car,
@@ -365,6 +370,7 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, **kwargs):
             else:
                 curr_sd_rec = nusc.get("sample_data", curr_sd_rec["prev"])
                 
+                #support for using partial dataset
                 sweep_lidar_file = os.path.join(nusc.dataroot, curr_sd_rec['filename'])
                 if not os.path.exists(sweep_lidar_file):
                     continue
@@ -528,7 +534,7 @@ def eval_main(nusc, eval_version, res_path, eval_set, output_dir):
         gt_boxes=gt_boxes       
     )
     nusc_eval.meta = meta
-    _ = nusc_eval.main(plot_examples=0,)
+    _ = nusc_eval.main(plot_examples=5,)
 
 
 if __name__ == '__main__':

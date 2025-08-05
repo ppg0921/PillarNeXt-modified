@@ -1,9 +1,13 @@
 import json
 import operator
+from time import time
 import numpy as np
 import os
 import itertools
 from pathlib import Path
+from pyquaternion import Quaternion
+import PIL.Image as pil
+from os import path
 
 from nuscenes import NuScenes
 
@@ -16,7 +20,8 @@ from det3d.datasets.nuscenes.nusc_common import (
     eval_main
 )
 
-
+from det3d.datasets.nuscenes.fusion_utils import project_points
+from nuscenes.utils.data_classes import LidarPointCloud, PointCloud
 
 class NuScenesDataset(BaseDataset):
 
@@ -33,7 +38,10 @@ class NuScenesDataset(BaseDataset):
                  evaluations=None,
                  create_database=False,
                  use_gt_sampling=True,
-                 version="v1.0-trainval"):
+                 version="v1.0-trainval",
+                 fuse_camera=False,
+                 cam_name="CAM_FRONT",
+                 padding=True):
 
         super(NuScenesDataset, self).__init__(
             root_path, info_path, sampler, loading_pipelines, augmentation, prepare_label, evaluations, create_database,
@@ -44,6 +52,9 @@ class NuScenesDataset(BaseDataset):
 
         self._class_names = list(itertools.chain(*[t for t in class_names]))
         self.version = version
+        self.fuse_camera = fuse_camera
+        self.cam_name = cam_name
+        self.padding = padding
 
         if resampling:
             self.cbgs()
@@ -81,6 +92,7 @@ class NuScenesDataset(BaseDataset):
 
         nbr_points = points_sweep.shape[1]
         if sweep["transform_matrix"] is not None:
+            # print(f"[DEBUG] Applying transform matrix to sweep points")
             points_sweep[:3, :] = sweep["transform_matrix"].dot(
                 np.vstack((points_sweep[:3, :], np.ones(nbr_points))))[:3, :]
         points_sweep = self.remove_close(points_sweep, min_distance)
@@ -100,15 +112,19 @@ class NuScenesDataset(BaseDataset):
         points = points[:, not_close]
         return points
 
-    def load_pointcloud(self, res, info):
+    @staticmethod
+    def to_struct(arr):
+        return arr.view([('', arr.dtype)] * arr.shape[1]).squeeze()
 
+    def read_sweep_from_info(self, info):
         lidar_path = info["lidar_path"]
 
         points = self.read_file(str(lidar_path))
 
         sweep_points_list = [points]
         sweep_times_list = [np.zeros((points.shape[0], 1))]
-
+        # stores the time lag for each point relative to the reference frame
+        
         for i in range(len(info["sweeps"])):
             sweep = info["sweeps"][i]
             points_sweep, times_sweep = self.read_sweep(sweep)
@@ -117,10 +133,257 @@ class NuScenesDataset(BaseDataset):
 
         points = np.concatenate(sweep_points_list, axis=0)
         times = np.concatenate(sweep_times_list, axis=0).astype(points.dtype)
+        # print(f"[DEBUG] Loaded pointcloud with shape {points.shape} and times shape {times.shape}\n")
+        return points, times
+    
+    def load_and_transform_lidar_to_cam(self, nusc: NuScenes, sample, info,
+                                    cam_name='CAM_FRONT',
+                                    nsweeps=10):
+        """
+        Load LIDAR points and transform to camera coordinates
+        Args:
+            nusc: Nuscenss instance
+            sample: Nuscenes sample
+            cam_name: Camera name to transform into
+            nsweeps: Number of LIDAR sweeps to use
 
-        res["points"] = np.hstack([points, times])
+        Returns: LidarPointCloud in the camera coordinates system
 
-        return res
+        """
+        pointsensor_token = sample['data']['LIDAR_TOP']
+        camera_token = sample['data'][cam_name]
+
+        cam = nusc.get('sample_data', camera_token)
+        pointsensor = nusc.get('sample_data', pointsensor_token)
+        # pcl_path = path.join(nusc.dataroot, pointsensor['filename'])
+
+        # chan = pointsensor['channel']
+        # ref_chan = 'LIDAR_TOP'
+
+        pc, time_lags = self.read_sweep_from_info(info)
+        
+        pc_lidar = pc
+        
+        pc = np.array(pc).T
+        # print(f"[DEBUG] Loaded pointcloud with shape {pc.shape}\n")
+        pc = LidarPointCloud(pc)
+        
+        
+
+        # First step: transform the point-cloud to the ego vehicle frame for the
+        # timestamp of the sweep.
+        cs_record = nusc.get('calibrated_sensor',
+                            pointsensor['calibrated_sensor_token'])
+        pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
+        pc.translate(np.array(cs_record['translation']))
+
+        # Second step: transform to the global frame.
+        poserecord = nusc.get('ego_pose', pointsensor['ego_pose_token'])
+        pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix)
+        pc.translate(np.array(poserecord['translation']))
+
+        # Third step: transform into the ego vehicle frame for the timestamp of
+        # the image.
+        poserecord = nusc.get('ego_pose', cam['ego_pose_token'])
+        pc.translate(-np.array(poserecord['translation']))
+        pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
+
+        # Fourth step: transform into the camera.
+        cs_record = nusc.get('calibrated_sensor', cam['calibrated_sensor_token'])
+        pc.translate(-np.array(cs_record['translation']))
+        pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix.T)
+
+        return pc, pc_lidar, time_lags
+
+    def get_camera_fused_pointcloud(self, nusc: NuScenes, sample, info,
+                                cam_name='CAM_FRONT',
+                                min_dist=1.0,
+                                nsweeps=10,
+                                fuse_camera=True):
+        """
+        Loads points from lidar pointcloud, finds the points that are within a
+        camera's FOV, and the color of the corresponding points in the camera's
+        image. Optionally will estimate depths for more camera pixels based on the
+        lidar points and will add them to the returned pointcloud.
+        Args:
+            nusc: Nuscenes instance
+            sample: Nuscenes sample
+            cam_name: Name of the camera
+            min_dist: Distance in meters below which points will be ignored
+            nsweeps: Number of lidar sweeps to use
+            fuse_camera: Weather to add color dimension to the pointcloud
+            fill_method:
+                - None: No depth completion performed
+                - 'ipbasic': depth completion based on ip-basic
+                - 'knn': depth completion based on KNN regression.
+                - 'maskconv': depth completion with masked convolutions.
+                This parameter will be ignored if fuse_camera is false
+
+        Returns: PointCloud containing only the points that are within the
+        camera's field of view transformed to ego vehicle reference frame.
+
+        Some of the logic in this function is taken from map_pointcloud_to_image
+        function in the Nuscenes dev-kit:
+        https://github.com/nutonomy/nuscenes-devkit/python-sdk/nuscenes/
+            nuscenes.py#L532
+        """
+
+        pc, pc_lidar, time_lags = self.load_and_transform_lidar_to_cam(nusc, sample, info, cam_name,
+                                                        nsweeps)
+        # pc is already in the type of PointCloud
+        # pc = PointCloud(pc)
+        # pc now is in the camera reference frame
+
+        camera_token = sample['data'][cam_name]
+        cam = nusc.get('sample_data', camera_token)
+        cs_record = nusc.get('calibrated_sensor', cam['calibrated_sensor_token'])
+
+        im = pil.open(path.join(nusc.dataroot, cam['filename']))
+
+        # Nuscenes pointcloud point dimensions start with x, y, and z coordinates.
+        depths = pc.points[2, :]
+
+        p_points, mask = project_points(pc.points[:3, :],
+                                        np.array(cs_record['camera_intrinsic']),
+                                        im.size, min_dist)
+
+        depths = depths[mask]
+        p_points = p_points[:, mask]    # projected points
+        
+        
+
+        # pc.points = pc.points[:, mask]  # masked points in camera FOV
+        # time_lags = time_lags[:, mask]
+        # print(f"[FUSION DEBUG] shape of pc: {pc.points.shape}, shape of time_lags: {time_lags.shape}\n")
+        
+        pc_lidar = pc_lidar[mask, :]
+        time_lags = time_lags[mask, :]
+        
+        # pc = PointCloud(pc.points)
+
+        if fuse_camera:
+            # Get colors of the projected points from the RGB image
+            colors = []
+            for p in list(zip(p_points[0], p_points[1])):
+                colors.append(im.getpixel(p))
+
+            # pc.add_dims(np.array(colors).T)
+        # print(f"[FUSION DEBUG] colors shape: {np.array(colors).shape}")
+        # colors = np.array(colors).T
+        colors = np.array(colors)
+        # print(f"[FUSION DEBUG] colors shape after transpose: {colors.shape}")
+        # back to lidar reference frame
+        # pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
+        # pc.translate(np.array(cs_record['translation']))
+
+        # fused_pc = np.vstack([pc.points, time_lags, colors]).T
+        fused_pc = np.hstack([pc_lidar, time_lags, colors])
+
+        return fused_pc
+
+    def load_pointcloud(self, res, info):
+        
+        if not self.fuse_camera:
+
+            # lidar_path = info["lidar_path"]
+
+            # points = self.read_file(str(lidar_path))
+
+            # sweep_points_list = [points]
+            # sweep_times_list = [np.zeros((points.shape[0], 1))]
+            # # stores the time lag for each point relative to the reference frame
+            
+            # for i in range(len(info["sweeps"])):
+            #     sweep = info["sweeps"][i]
+            #     points_sweep, times_sweep = self.read_sweep(sweep)
+            #     sweep_points_list.append(points_sweep)
+            #     sweep_times_list.append(times_sweep)
+
+            # points = np.concatenate(sweep_points_list, axis=0)
+            # times = np.concatenate(sweep_times_list, axis=0).astype(points.dtype)
+            
+            points, times = self.read_sweep_from_info(info)
+
+            res["points"] = np.hstack([points, times])
+            # print(f"[DEBUG] points.shape={res['points'].shape}")
+
+            return res
+        
+        else:
+            # print(f"[DEBUG] loading pointcloud with camera fusion\n")
+            all_cam_names = [
+                "CAM_FRONT", "CAM_FRONT_LEFT", "CAM_FRONT_RIGHT",
+                "CAM_BACK", "CAM_BACK_LEFT", "CAM_BACK_RIGHT"
+            ]
+            nusc = NuScenes(version=self.version, dataroot=str(
+            self._root_path), verbose=False)
+            sample = nusc.get('sample', info['token'])
+            fused_list = []
+            for cam in all_cam_names:
+                fused_pts = self.get_camera_fused_pointcloud(
+                    nusc= nusc, sample= sample, info= info,
+                    cam_name= cam,
+                    min_dist= 1.0, nsweeps= self.nsweeps,
+                    fuse_camera= self.fuse_camera
+                )
+                fused_list.append(fused_pts)
+            
+            fused_pts = np.concatenate(fused_list, axis=0)
+            
+            fused_xyz_rounded = np.round(fused_pts[:, :3], decimals=3)
+            _, unique_indices = np.unique(fused_xyz_rounded, axis=0, return_index=True)
+            # print(f"[DEBUG] eliminating {fused_pts.shape[0] - len(unique_indices)} duplicate points")
+            fused_pts = fused_pts[unique_indices]
+            
+            if self.padding:
+
+                full_points, time_lags = self.read_sweep_from_info(info)
+                
+                fused_xyz = np.round(fused_pts[:, :3].astype(np.float64), 3)
+                full_xyz = np.round(full_points[:, :3].astype(np.float64), 3)
+                
+
+                fused_struct = self.to_struct(fused_xyz)
+                full_struct = self.to_struct(full_xyz)
+
+                # fused_xyz_set = set(
+                #     tuple(np.round(xyz.astype(np.float64), 3)) for xyz in fused_pts[:, :3]
+                # )
+                # full_xyz_rounded = np.round(full_points[:, :3].astype(np.float64), 3)
+                
+                # idx_full  = np.random.choice(full_xyz_rounded.shape[0], 10, replace=False)
+                # idx_fused = np.random.choice(fused_xyz_rounded.shape[0], 10, replace=False)
+
+                # print("=== DEBUG SAMPLE POINTS ===")
+                # print("Full (rounded) XYZ:")
+                # print(full_xyz_rounded[idx_full, :3])  # full_points already filtered and rounded above
+
+                # print("\nFused (rounded) XYZ:")
+                # print(fused_xyz_rounded[idx_fused, :3])  # fused_pts already filtered and rounded above
+                mask_not_in_fused = ~np.isin(full_struct, fused_struct)
+                # print(f"[DEBUG] {mask_not_in_fused.sum()} points not in fused points")
+                # print(f"[DEBUG] Number of points in full_xyz also in fused_xyz: {(~mask_not_in_fused).sum()} / {full_xyz.shape[0]}")
+                # print(f"[DEBUG] {mask_not_in_fused.sum()} points not in fused points")
+                # common = 0
+                # for xyz in full_xyz_rounded:
+                #     if tuple(xyz) in fused_xyz_set:
+                #         common += 1
+                # print(f"[DEBUG] Number of points in full_xyz also in fused_xyz: {common} / {full_xyz_rounded.shape[0]}")
+                unseen_points = full_points[mask_not_in_fused]
+                unseen_time_lags = time_lags[mask_not_in_fused]
+                black_rgb = np.zeros((unseen_points.shape[0], 3), dtype=np.float32)
+                
+                padded_pts = np.hstack([unseen_points, unseen_time_lags, black_rgb])
+                
+                all_pts = np.concatenate([fused_pts, padded_pts], axis=0)
+                res["points"] = all_pts.astype(np.float32)
+            else:
+                res["points"] = fused_pts.astype(np.float32)
+            
+            
+            
+            # print(f"[DEBUG] points.shape={res['points'].shape}")
+            return res
 
     def evaluation(self, detections, output_dir=None, testset=False):
         version = self.version

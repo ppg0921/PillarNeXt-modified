@@ -78,7 +78,7 @@ data:
       rate: 1.0
       gt_drop_percentage: 0
       gt_drop_max_keep_points: -1
-      point_dim: 5
+      point_dim: 8
     prepare_label:
       centermap:
         tasks: ${_tasks}

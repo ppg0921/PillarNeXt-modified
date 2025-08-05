@@ -4,12 +4,16 @@ from det3d.datasets.nuscenes.nusc_common import create_nuscenes_infos
 from create_gt_database import create_groundtruth_database
 
 
-def nuscenes_data_prep(root_path, version="v1.0-trainval", nsweeps=10):
+def nuscenes_data_prep(root_path, version="v1.0-trainval", nsweeps=10, fuse_camera=False, cam_name="CAM_FRONT", padding=True):
     create_nuscenes_infos(root_path, version=version, nsweeps=nsweeps)
     create_groundtruth_database('NUSC', 
                                 root_path, 
                                 'infos_train_10sweeps_withvelo_filterZero.pkl',
-                                nsweeps=nsweeps)
+                                nsweeps=nsweeps,
+                                version=version,
+                                fuse_camera=fuse_camera,
+                                cam_name=cam_name,
+                                padding=padding)
 
 
 # def waymo_data_prep(root_path, save_path, nsweeps=3):

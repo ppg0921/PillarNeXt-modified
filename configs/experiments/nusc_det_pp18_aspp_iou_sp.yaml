@@ -11,7 +11,7 @@ defaults:
 _tasks: [["car"], ["truck", "construction_vehicle"], ["bus", "trailer"], ["barrier"], ["motorcycle", "bicycle"], ["pedestrian", "traffic_cone"] ]
 model:
   reader:
-    num_input_features: 5
+    num_input_features: 8
     voxel_size: [0.075, 0.075, 8]
     pc_range: [-50.4, -50.4, -5.0, 50.4, 50.4, 3.0]
   backbone:
@@ -79,7 +79,7 @@ data:
       rate: 1.0
       gt_drop_percentage: 0
       gt_drop_max_keep_points: -1
-      point_dim: 5
+      point_dim: 8
     prepare_label:
       centermap:
         tasks: ${_tasks}
@@ -88,7 +88,11 @@ data:
         out_size_factor: [4, 4, 4, 4, 4, 4]
     resampling: True
     version: v1.0-trainval
+    fuse_camera: True
+    cam_name: 'CAM_FRONT'
   val_dataset:
     class_names: ${_tasks}
     version: ${data.train_dataset.version}
+    fuse_camera: True
+    cam_name: 'CAM_FRONT'
 

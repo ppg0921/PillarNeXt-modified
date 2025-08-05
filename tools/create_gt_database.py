@@ -14,7 +14,11 @@ def create_groundtruth_database(
     db_path=None,
     dbinfo_path=None,
     relative_path=True,
-    nsweeps=1
+    nsweeps=1,
+    version="v1.0-trainval",
+    fuse_camera=False,
+    cam_name="CAM_FRONT",
+    padding=True
 ):
     if dataset_name == "WAYMO":
         from det3d.datasets.waymo.waymo import WaymoDataset
@@ -29,7 +33,11 @@ def create_groundtruth_database(
             nsweeps=nsweeps,
             root_path=data_path,
             info_path=info_path,
+            version=version,
             create_database=True,
+            fuse_camera=fuse_camera,
+            cam_name=cam_name,
+            padding=padding
         )
         nsweeps = dataset.nsweeps
     else:
@@ -38,7 +46,11 @@ def create_groundtruth_database(
             root_path=data_path,
             loading_pipelines=pipeline,
             nsweeps=1,
+            version=version,
             create_database=True,
+            fuse_camera=fuse_camera,
+            cam_name=cam_name,
+            padding=padding
         )
         nsweeps = 1
 
@@ -101,7 +113,7 @@ def create_groundtruth_database(
                 dirpath = os.path.join(str(db_path), names[i])
                 os.makedirs(dirpath, exist_ok=True)
                 filepath = os.path.join(str(db_path), names[i], filename)
-                gt_points = points[point_indices[:, i]]
+                gt_points = points[point_indices[:, i]]     # points that are in the gt box
                 gt_points[:, :3] -= gt_boxes[i, :3]
                 with open(filepath, "w") as f:
                     try:

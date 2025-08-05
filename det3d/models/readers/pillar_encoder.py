@@ -174,6 +174,7 @@ class PillarFeatureNet(nn.Module):
         """
         super().__init__()
         assert len(num_filters) > 0
+        
         num_input_features += 5
 
         # Create PillarFeatureNet layers

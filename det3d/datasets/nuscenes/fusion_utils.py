@@ -2,11 +2,13 @@ import numpy as np
 from pyquaternion import Quaternion
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.data_classes import PointCloud, LidarPointCloud, Box
+from numba import njit
+from numba import types
 
 
 
 
-
+@njit
 def project_points(points, camera_intrinsics: np.ndarray, image_size,
                    min_dist=0.0):
     """
@@ -41,7 +43,14 @@ def project_points(points, camera_intrinsics: np.ndarray, image_size,
     p_points = np.dot(viewpad, p_points)
     p_points = p_points[:3, :]
 
-    p_points = p_points / p_points[2:3, :].repeat(3, 0).reshape(3, nbr_points)
+    # p_points = p_points / p_points[2:3, :].repeat(3, 0).reshape(3, nbr_points)
+    denom = np.empty((3, nbr_points), dtype=p_points.dtype)
+    denom[0, :] = p_points[2, :]
+    denom[1, :] = p_points[2, :]
+    denom[2, :] = p_points[2, :]
+    # denom has the same shape as p_points and contains the repeated third row
+
+    p_points = p_points / denom
 
     # Indices for 2D pixel dimensions
     u = 0  # along the width axis
@@ -49,7 +58,9 @@ def project_points(points, camera_intrinsics: np.ndarray, image_size,
 
     # Create a mask for choosing points that are at least a certain distance
     # away, and within the camera FOV.
-    mask = np.ones(points.shape[1], dtype=bool)
+    # mask = np.ones(points.shape[1], dtype=bool)
+    mask = np.ones(points.shape[1], dtype=np.bool_)
+
     mask = np.logical_and(mask, depths > min_dist)
     mask = np.logical_and(mask, p_points[u, :] >= 0)
     mask = np.logical_and(mask, p_points[u, :] < image_size[0])

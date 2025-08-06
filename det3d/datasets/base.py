@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 from torch.utils.data import Dataset
 from det3d.core.bbox import box_np_ops
+import time
 
 
 class BaseDataset(Dataset):
@@ -63,19 +64,26 @@ class BaseDataset(Dataset):
         return res
 
     def __getitem__(self, idx):
+        # t0 = time.time()
 
         info = self.infos[idx]
         res = {"token": info["token"]}
 
+        # t1 = time.time()
         if self.loading_pipelines is not None:
             for lp in self.loading_pipelines:
                 res = getattr(self, lp)(res, info)
+        # t2 = time.time()
         if self.sampler is not None:
+            # t_sample_start = time.time()
             sampled_dict = self.sampler.sample_all(
                 res['annotations']['gt_boxes'],
                 res["annotations"]['gt_names']
             )
+            # t_sample_end = time.time()
+            # print(f"[TIME][{idx}] sampler.sample_all: {t_sample_end - t_sample_start:.4f}s")
             if sampled_dict is not None:
+                # t_sample_merge_start = time.time()
                 sampled_gt_names = sampled_dict["gt_names"]
                 sampled_gt_boxes = sampled_dict["gt_boxes"]
                 sampled_points = sampled_dict["points"]
@@ -86,7 +94,7 @@ class BaseDataset(Dataset):
                 res['annotations']["gt_boxes"] = np.concatenate(
                     [res['annotations']["gt_boxes"], sampled_gt_boxes]
                 )
-
+                
                 # remove points in sampled gt boxes
                 sampled_point_indices = box_np_ops.points_in_rbbox(
                     res['points'], sampled_gt_boxes[sampled_gt_masks])
@@ -95,16 +103,37 @@ class BaseDataset(Dataset):
 
                 res['points'] = np.concatenate(
                     [sampled_points, res['points']], axis=0)
+                # t_sample_merge_end = time.time()
+                # print(f"[TIME][{idx}] merge sampled data: {t_sample_merge_end - t_sample_merge_start:.4f}s")
+
+        # t3 = time.time()
         if self.augmentations is not None:
             for aug in self.augmentations.values():
+                # t_aug_start = time.time()
                 res = aug(res)
+                # t_aug_end = time.time()
+        #         print(f"[TIME][{idx}] augmentation {aug.__class__.__name__}: {t_aug_end - t_aug_start:.4f}s")
+        # t4 = time.time()
 
         if self.prepare_label is not None:
             for _, pl in self.prepare_label.items():
+                # t_pl_start = time.time()
                 res = pl(res)
-
+        #         t_pl_end = time.time()
+        #         print(f"[TIME][{idx}] prepare_label : {t_pl_end - t_pl_start:.4f}s")
+        # t5 = time.time()
         if 'annotations' in res and (not self.create_database):
             del res['annotations']
+            
+        # t6 = time.time()
+        # print(
+        #     f"[TIME][{idx}] in __getitem__ TOTAL: {t6 - t0:.4f}s | "
+        #     f"load_pipelines: {t2 - t1:.4f}s | "
+        #     f"sampler: {t3 - t2:.4f}s | "
+        #     f"augmentations: {t4 - t3:.4f}s | "
+        #     f"prepare_label: {t5 - t4:.4f}s | "
+        #     f"cleanup: {t6 - t5:.4f}s"
+        # )
 
         return res
 

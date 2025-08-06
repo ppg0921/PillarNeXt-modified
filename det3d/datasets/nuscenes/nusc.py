@@ -8,6 +8,7 @@ from pathlib import Path
 from pyquaternion import Quaternion
 import PIL.Image as pil
 from os import path
+import time
 
 from nuscenes import NuScenes
 
@@ -55,6 +56,8 @@ class NuScenesDataset(BaseDataset):
         self.fuse_camera = fuse_camera
         self.cam_name = cam_name
         self.padding = padding
+        self.nusc = NuScenes(version=self.version, dataroot=str(
+            self._root_path), verbose=False)
 
         if resampling:
             self.cbgs()
@@ -137,7 +140,7 @@ class NuScenesDataset(BaseDataset):
         return points, times
     
     def load_and_transform_lidar_to_cam(self, nusc: NuScenes, sample, info,
-                                    cam_name='CAM_FRONT',
+                                    cam_name='CAM_FRONT', pc_full=None, time_lags_full=None,
                                     nsweeps=10):
         """
         Load LIDAR points and transform to camera coordinates
@@ -150,53 +153,96 @@ class NuScenesDataset(BaseDataset):
         Returns: LidarPointCloud in the camera coordinates system
 
         """
+        # t0 = time.time()
         pointsensor_token = sample['data']['LIDAR_TOP']
-        camera_token = sample['data'][cam_name]
-
-        cam = nusc.get('sample_data', camera_token)
         pointsensor = nusc.get('sample_data', pointsensor_token)
+        camera_token = sample['data'][cam_name]
+        cam = nusc.get('sample_data', camera_token)
+        # t1 = time.time()
+        # print(f"[TIME][{cam_name}] image + calibration load: {t1 - t0:.4f}s")
         # pcl_path = path.join(nusc.dataroot, pointsensor['filename'])
 
         # chan = pointsensor['channel']
         # ref_chan = 'LIDAR_TOP'
 
-        pc, time_lags = self.read_sweep_from_info(info)
+        # t2 = time.time()
+        # pc, time_lags = self.read_sweep_from_info(info)
+
+        pc_lidar = pc_full.copy()
+        time_lags_lidar = time_lags_full.copy()
+        # t25 = time.time()
+        # print(f"[TIME][{cam_name}] read_sweep_from_info: {t25 - t2:.4f}s")
         
-        pc_lidar = pc
-        
-        pc = np.array(pc).T
+        pc_cam = np.array(pc_full).T
         # print(f"[DEBUG] Loaded pointcloud with shape {pc.shape}\n")
-        pc = LidarPointCloud(pc)
+        # pc_cam_old = LidarPointCloud(pc_cam.copy())
+        pc_cam = LidarPointCloud(pc_cam)
+        
+        # t3 = time.time()
+        # print(f"[TIME][{cam_name}] pointcloud creation: {t3 - t25:.4f}s")
         
         
 
         # First step: transform the point-cloud to the ego vehicle frame for the
         # timestamp of the sweep.
+        # t4 = time.time()
         cs_record = nusc.get('calibrated_sensor',
                             pointsensor['calibrated_sensor_token'])
-        pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
-        pc.translate(np.array(cs_record['translation']))
+        R1 = Quaternion(cs_record['rotation']).rotation_matrix
+        T1 = np.array(cs_record['translation'])
+        # pc_cam_old.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
+        # pc_cam_old.translate(np.array(cs_record['translation']))
 
         # Second step: transform to the global frame.
         poserecord = nusc.get('ego_pose', pointsensor['ego_pose_token'])
-        pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix)
-        pc.translate(np.array(poserecord['translation']))
+        R2 = Quaternion(poserecord['rotation']).rotation_matrix
+        T2 = np.array(poserecord['translation'])
+        # pc_cam_old.rotate(Quaternion(poserecord['rotation']).rotation_matrix)
+        # pc_cam_old.translate(np.array(poserecord['translation']))
 
         # Third step: transform into the ego vehicle frame for the timestamp of
         # the image.
         poserecord = nusc.get('ego_pose', cam['ego_pose_token'])
-        pc.translate(-np.array(poserecord['translation']))
-        pc.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
+        R3 = Quaternion(poserecord['rotation']).rotation_matrix.T
+        T3 = -np.array(poserecord['translation'])
+        T3 = R3.dot(T3)
+        # pc_cam_old.translate(-np.array(poserecord['translation']))
+        # pc_cam_old.rotate(Quaternion(poserecord['rotation']).rotation_matrix.T)
 
         # Fourth step: transform into the camera.
         cs_record = nusc.get('calibrated_sensor', cam['calibrated_sensor_token'])
-        pc.translate(-np.array(cs_record['translation']))
-        pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix.T)
+        R4 = Quaternion(cs_record['rotation']).rotation_matrix.T
+        T4 = -np.array(cs_record['translation'])
+        T4 = R4.dot(T4)
+        # pc_cam_old.translate(-np.array(cs_record['translation']))
+        # pc_cam_old.rotate(Quaternion(cs_record['rotation']).rotation_matrix.T)
 
-        return pc, pc_lidar, time_lags
+        Atotal = R4.dot(R3.dot(R2.dot(R1)))
+        Ttotal = R4.dot(R3.dot(R2.dot(T1) + T2) + T3) + T4
+        
+        pc_cam.rotate(Atotal)
+        pc_cam.translate(Ttotal) 
+        
+        # points_cam = pc_cam.points.T
+        # points_cam_old = pc_cam_old.points.T
+        
+        # if np.array_equal(points_cam, points_cam_old):
+        #     print("✅ All points match exactly, in order.")
+        # else:
+        #     # 2) find which rows differ
+        #     diffs = np.any(points_cam != points_cam_old, axis=1)   # length-N boolean
+        #     bad_idxs = np.nonzero(diffs)[0]
+        #     print(f"❌ {len(bad_idxs)} mismatches at indices: {bad_idxs}")
+
+        #     # 3) inspect a few examples
+        #     for i in bad_idxs[:5]:
+        #         print(f" index {i}: old={points_cam_old[i]} vs new={points_cam[i]}")
+        # t5 = time.time()
+
+        return pc_cam, pc_lidar, time_lags_lidar
 
     def get_camera_fused_pointcloud(self, nusc: NuScenes, sample, info,
-                                cam_name='CAM_FRONT',
+                                cam_name='CAM_FRONT', pc_full=None, time_lags_full=None,
                                 min_dist=1.0,
                                 nsweeps=10,
                                 fuse_camera=True):
@@ -228,8 +274,12 @@ class NuScenesDataset(BaseDataset):
             nuscenes.py#L532
         """
 
-        pc, pc_lidar, time_lags = self.load_and_transform_lidar_to_cam(nusc, sample, info, cam_name,
-                                                        nsweeps)
+        # t0 = time.time()
+        pc_cam, pc_lidar, time_lags_cam = self.load_and_transform_lidar_to_cam(nusc, sample, info, cam_name=cam_name, 
+                                                                       pc_full=pc_full, time_lags_full=time_lags_full,
+                                                                       nsweeps=nsweeps)
+        # t1 = time.time()
+        # print(f"[TIME][{cam_name}] load_and_transform_lidar_to_cam: {t1 - t0:.4f}s")
         # pc is already in the type of PointCloud
         # pc = PointCloud(pc)
         # pc now is in the camera reference frame
@@ -238,50 +288,96 @@ class NuScenesDataset(BaseDataset):
         cam = nusc.get('sample_data', camera_token)
         cs_record = nusc.get('calibrated_sensor', cam['calibrated_sensor_token'])
 
+        # t2 = time.time()
         im = pil.open(path.join(nusc.dataroot, cam['filename']))
-
+        # t3 = time.time()
+        # print(f"[TIME][{cam_name}] image + calibration load: {t3 - t2:.4f}s")
         # Nuscenes pointcloud point dimensions start with x, y, and z coordinates.
-        depths = pc.points[2, :]
+        # depths = pc_cam.points[2, :]
 
-        p_points, mask = project_points(pc.points[:3, :],
+        # t4 = time.time()
+        p_points, mask = project_points(pc_cam.points[:3, :],
                                         np.array(cs_record['camera_intrinsic']),
                                         im.size, min_dist)
-
-        depths = depths[mask]
+        # t5 = time.time()
+        # print(f"[TIME][{cam_name}] project_points: {t5 - t4:.4f}s")
+        
+        # t6 = time.time()
+        # depths = depths[mask]
         p_points = p_points[:, mask]    # projected points
-        
-        
-
         # pc.points = pc.points[:, mask]  # masked points in camera FOV
         # time_lags = time_lags[:, mask]
         # print(f"[FUSION DEBUG] shape of pc: {pc.points.shape}, shape of time_lags: {time_lags.shape}\n")
         
         pc_lidar = pc_lidar[mask, :]
-        time_lags = time_lags[mask, :]
+        time_lags_cam = time_lags_cam[mask, :]
         
+        # t7 = time.time()
+        # print(f"[TIME][{cam_name}] apply mask: {t7 - t6:.4f}s")
         # pc = PointCloud(pc.points)
 
         if fuse_camera:
             # Get colors of the projected points from the RGB image
-            colors = []
-            for p in list(zip(p_points[0], p_points[1])):
-                colors.append(im.getpixel(p))
+            # t8 = time.time()
+            # colors = []
+            # for p in list(zip(p_points[0], p_points[1])):
+            #     colors.append(im.getpixel(p))
+            # t9 = time.time()
+            # print(f"[TIME][{cam_name}] color sampling: {t9 - t8:.4f}s")
+            
+# 2. Round projected coords to integer pixel indices
+            # t8 = time.time()
+            im_arr = np.asarray(im)  # shape (H, W, C)
 
+            xs = p_points[0].astype(np.int32)   # floor all values
+            ys = p_points[1].astype(np.int32)
+
+
+            # 3. Keep idxs within [0..W-1] and [0..H-1]
+            # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
+            # ys = np.clip(ys, 0, im_arr.shape[0] - 1)
+
+            # 4. One‐shot color lookup: returns (N, C)
+            colors = im_arr[ys, xs]
+            # t9 = time.time()
+            # print(f"[TIME][{cam_name}] color sampling v2: {t9 - t8:.4f}s")
+            
+            # print(f"[FUSION DEBUG] colors_new shape: {colors_new.shape}")
+            
             # pc.add_dims(np.array(colors).T)
         # print(f"[FUSION DEBUG] colors shape: {np.array(colors).shape}")
         # colors = np.array(colors).T
-        colors = np.array(colors)
+        # colors = np.array(colors)
+        # print(f"[FUSION DEBUG] colors shape: {colors.shape}")
+        
+            # if np.array_equal(colors, colors_new):
+            #     print("✅ All pixels match exactly, in order.")
+            # else:
+            #     # 2) find which rows differ
+            #     diffs = np.any(colors != colors_new, axis=1)   # length-N boolean
+            #     bad_idxs = np.nonzero(diffs)[0]
+            #     print(f"❌ {len(bad_idxs)} mismatches at indices: {bad_idxs}")
+
+            #     # 3) inspect a few examples
+            #     for i in bad_idxs[:5]:
+            #         print(f" index {i}: old={colors[i]} vs new={colors_new[i]}")
         # print(f"[FUSION DEBUG] colors shape after transpose: {colors.shape}")
         # back to lidar reference frame
         # pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
         # pc.translate(np.array(cs_record['translation']))
 
         # fused_pc = np.vstack([pc.points, time_lags, colors]).T
-        fused_pc = np.hstack([pc_lidar, time_lags, colors])
+        # t10 = time.time()
+        fused_pc = np.hstack([pc_lidar, time_lags_cam, colors])
+        # t11 = time.time()
+        # print(f"[TIME][{cam_name}] fusion process: {t11 - t10:.4f}s")
+        
+        # print(f"[TIME][{cam_name}] TOTAL get_camera_fused_pointcloud: {t11 - t0:.4f}s")
 
         return fused_pc
 
     def load_pointcloud(self, res, info):
+        # t_load_start = time.time()
         
         if not self.fuse_camera:
 
@@ -311,33 +407,58 @@ class NuScenesDataset(BaseDataset):
         
         else:
             # print(f"[DEBUG] loading pointcloud with camera fusion\n")
+            # t0 = time.time()
             all_cam_names = [
                 "CAM_FRONT", "CAM_FRONT_LEFT", "CAM_FRONT_RIGHT",
                 "CAM_BACK", "CAM_BACK_LEFT", "CAM_BACK_RIGHT"
             ]
-            nusc = NuScenes(version=self.version, dataroot=str(
-            self._root_path), verbose=False)
-            sample = nusc.get('sample', info['token'])
+            
+            sample = self.nusc.get('sample', info['token'])
+            # t1 = time.time()
+            # print(f"[TIME] Loading sample {info['token']} from NuScenes: {t1 - t0:.4f}s")
+            pc_full, time_lags_full = self.read_sweep_from_info(info)
             fused_list = []
             for cam in all_cam_names:
+                # t_get_fused_pc_start = time.time()
                 fused_pts = self.get_camera_fused_pointcloud(
-                    nusc= nusc, sample= sample, info= info,
-                    cam_name= cam,
+                    nusc= self.nusc, sample= sample, info= info,
+                    cam_name= cam, pc_full= pc_full, time_lags_full= time_lags_full,
                     min_dist= 1.0, nsweeps= self.nsweeps,
                     fuse_camera= self.fuse_camera
                 )
                 fused_list.append(fused_pts)
-            
+                # t_get_fused_pc_end = time.time()
+                # print(f"[TIME] get_camera_fused_pointcloud({cam}): {t_get_fused_pc_end - t_get_fused_pc_start:.4f}s")
+            # t2 = time.time()
+            # print(f"[TIME] Total get_camera_fused_pointcloud: {t2 - t1:.4f}s")
             fused_pts = np.concatenate(fused_list, axis=0)
             
-            fused_xyz_rounded = np.round(fused_pts[:, :3], decimals=3)
-            _, unique_indices = np.unique(fused_xyz_rounded, axis=0, return_index=True)
-            # print(f"[DEBUG] eliminating {fused_pts.shape[0] - len(unique_indices)} duplicate points")
+            # fused_xyz_rounded = np.round(fused_pts[:, :3], decimals=3)
+            # _, unique_indices = np.unique(fused_xyz_rounded, axis=0, return_index=True)
+            # # print(f"[DEBUG] eliminating {fused_pts.shape[0] - len(unique_indices)} duplicate points")
+            # fused_pts = fused_pts[unique_indices]
+            
+            scale = 1000  # same as rounding to 3 decimals for faster unique operation
+            xyz_int = np.rint(fused_pts[:, :3] * scale).astype(np.int32)
+
+            # 2) view each triple as a single void-dtype item
+            dtype_void = np.dtype((np.void, xyz_int.dtype.itemsize * 3))
+            xyz_void = xyz_int.view(dtype_void).ravel()
+
+            # 3) unique on the 1-D void array
+            _, unique_indices = np.unique(xyz_void, return_index=True)
+
+            # 4) pick out the deduped points
             fused_pts = fused_pts[unique_indices]
+            # t3 = time.time()
+            # print(f"[TIME] Camera fusion + dedup: {t3 - t2:.4f}s")
             
             if self.padding:
-
-                full_points, time_lags = self.read_sweep_from_info(info)
+                # t4 = time.time()
+                
+                # full_points, time_lags = self.read_sweep_from_info(info)
+                full_points = pc_full
+                time_lags = time_lags_full
                 
                 fused_xyz = np.round(fused_pts[:, :3].astype(np.float64), 3)
                 full_xyz = np.round(full_points[:, :3].astype(np.float64), 3)
@@ -377,11 +498,14 @@ class NuScenesDataset(BaseDataset):
                 
                 all_pts = np.concatenate([fused_pts, padded_pts], axis=0)
                 res["points"] = all_pts.astype(np.float32)
+                # t5 = time.time()
+                # print(f"[TIME] Padding process: {t5 - t4:.4f}s")
             else:
                 res["points"] = fused_pts.astype(np.float32)
             
             
-            
+            # t_load_end = time.time()
+            # print(f"[TIME] Total load_pointcloud with camera fusion: {t_load_end - t_load_start:.4f}s")
             # print(f"[DEBUG] points.shape={res['points'].shape}")
             return res
 

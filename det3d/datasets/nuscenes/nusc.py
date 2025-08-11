@@ -42,7 +42,8 @@ class NuScenesDataset(BaseDataset):
                  version="v1.0-trainval",
                  fuse_camera=False,
                  cam_name="CAM_FRONT",
-                 padding=True):
+                 padding=True,
+                 RGB_ratio=1.0):
 
         super(NuScenesDataset, self).__init__(
             root_path, info_path, sampler, loading_pipelines, augmentation, prepare_label, evaluations, create_database,
@@ -58,6 +59,7 @@ class NuScenesDataset(BaseDataset):
         self.padding = padding
         self.nusc = NuScenes(version=self.version, dataroot=str(
             self._root_path), verbose=False)
+        self.RGB_ratio = RGB_ratio
 
         if resampling:
             self.cbgs()
@@ -502,8 +504,9 @@ class NuScenesDataset(BaseDataset):
                 # print(f"[TIME] Padding process: {t5 - t4:.4f}s")
             else:
                 res["points"] = fused_pts.astype(np.float32)
-            
-            
+
+            res["points"][:, 5:8] *= self.RGB_ratio
+
             # t_load_end = time.time()
             # print(f"[TIME] Total load_pointcloud with camera fusion: {t_load_end - t_load_start:.4f}s")
             # print(f"[DEBUG] points.shape={res['points'].shape}")

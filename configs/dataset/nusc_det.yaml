@@ -18,3 +18,4 @@ val_dataset:
   info_path: infos_val_10sweeps_withvelo_filterZero.pkl
   fuse_camera: True
   cam_name: 'CAM_FRONT'
+  RGB_ratio: 1.0

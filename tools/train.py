@@ -108,6 +108,11 @@ def main(cfg: DictConfig):
 
     if 'load_from' in cfg:
         trainer.load_checkpoint(cfg.load_from)
+        
+    if getattr(cfg, "eval_only", False):
+        assert val_dataloader is not None, "Need a val_dataloader for evaluation."
+        trainer.val_epoch()
+        return
 
     trainer.fit()
 

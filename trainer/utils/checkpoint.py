@@ -3,6 +3,7 @@ import os.path as osp
 from collections import OrderedDict
 
 import torch
+import pickle
 
 
 def load_checkpoint(model, filename, map_location=None, strict=False):
@@ -23,7 +24,16 @@ def load_checkpoint(model, filename, map_location=None, strict=False):
     if not osp.isfile(filename):
         raise IOError("{} is not a checkpoint file".format(filename))
     
-    checkpoint = torch.load(filename, map_location=map_location)
+    # checkpoint = torch.load(filename, map_location=map_location)
+    try:
+        checkpoint = torch.load(filename, map_location=map_location, weights_only=False)
+    except TypeError:
+        # Older torch doesn't accept weights_only arg
+        checkpoint = torch.load(filename, map_location=map_location)
+    except pickle.UnpicklingError:
+        # If torch changed behavior or kwargs path failed, retry explicitly unsafe
+        checkpoint = torch.load(filename, map_location=map_location, weights_only=False)
+    
     # get state_dict from checkpoint
     if isinstance(checkpoint, OrderedDict):
         state_dict = checkpoint

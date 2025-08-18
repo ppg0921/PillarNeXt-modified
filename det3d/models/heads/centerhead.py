@@ -338,10 +338,11 @@ class CenterHead(nn.Module):
             box_preds = batch_box_preds[i]
             hm_preds = batch_hm[i]
             iou_preds = batch_iou[i].view(-1)
+            # for each prediction box, pick the best class and its score
             scores, labels = torch.max(hm_preds, dim=-1)
-            score_mask = scores > test_cfg.score_threshold
+            score_mask = scores > test_cfg.score_threshold  # score threshold
             distance_mask = (box_preds[..., :3] >= post_center_range[:3]).all(1) \
-                & (box_preds[..., :3] <= post_center_range[3:]).all(1)
+                & (box_preds[..., :3] <= post_center_range[3:]).all(1)  # range filtering
 
             mask = distance_mask & score_mask
 
@@ -349,6 +350,7 @@ class CenterHead(nn.Module):
             scores = scores[mask]
             labels = labels[mask]
             iou_preds = torch.clamp(iou_preds[mask], min=0., max=1.)
+            # a per-class weight in [0, 1] that blends classification confidence and predicted IoU
             rectifier = torch.tensor(self.rectifier[task_id]).to(hm_preds)
             scores = torch.pow(
                 scores, 1-rectifier[labels]) * torch.pow(iou_preds, rectifier[labels])

@@ -140,9 +140,9 @@ class PillarNet(nn.Module):
         unq = unq.int()
 
         points_mean_scatter = torch_scatter.scatter_mean(
-            points[:, 1:4], unq_inv, dim=0)
+            points[:, 1:4], unq_inv, dim=0)     # compute the mean xyz of its points within a pillar
 
-        f_cluster = points[:, 1:4] - points_mean_scatter[unq_inv]
+        f_cluster = points[:, 1:4] - points_mean_scatter[unq_inv]   # mean = 0 point coords
 
         # Find distance of x, y, and z from pillar center
         f_center = points[:, 1:3] - (points_coords[:, :2].to(dtype) * voxel_size[:2].unsqueeze(0) +

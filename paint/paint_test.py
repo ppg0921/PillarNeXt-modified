@@ -2,7 +2,7 @@ from mmdet.apis import init_detector, inference_detector
 from mmdet.registry import VISUALIZERS
 import mmcv
 
-cfg = 'configs/mask-rcnn_r50_fpn_coco-2x_1x_nuim.py'
+cfg = 'configs/nuimages/mask-rcnn_r50_fpn_coco-2x_1x_nuim.py'
 model = init_detector(cfg, checkpoint=None, device='cuda:0')  # uses load_from in cfg
 
 res = inference_detector(model, 'test_img.jpg')

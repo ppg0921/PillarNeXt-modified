@@ -2,7 +2,7 @@ from mmdet.apis import init_detector, inference_detector
 import mmcv
 
 # Path to your config
-config = 'mask_rcnn_r50_fpn_nuim-instance.py'
+config = 'mask-rcnn_r50_fpn_coco-2x_1x_nuim.py'
 
 # You can use the load_from field in config, or explicitly specify the checkpoint here
 checkpoint = None  # will use load_from in config

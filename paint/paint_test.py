@@ -1,18 +1,14 @@
 from mmdet.apis import init_detector, inference_detector
+from mmdet.registry import VISUALIZERS
 import mmcv
 
-# Path to your config
-config = 'mask-rcnn_r50_fpn_coco-2x_1x_nuim.py'
+cfg = 'configs/mask-rcnn_r50_fpn_coco-2x_1x_nuim.py'
+model = init_detector(cfg, checkpoint=None, device='cuda:0')  # uses load_from in cfg
 
-# You can use the load_from field in config, or explicitly specify the checkpoint here
-checkpoint = None  # will use load_from in config
-# checkpoint = 'checkpoints/mask_rcnn_r50_fpn_2x_coco.pth'  # if you downloaded manually
+res = inference_detector(model, 'test_img.jpg')
 
-# Instantiate model
-model = init_detector(config, checkpoint, device='cuda:0')
-
-# Run inference on an image
-result = inference_detector(model, 'test_img.jpg')
-
-# Show and save results
-model.show_result('test_img.jpg', result, out_file='result.jpg')
+vis = VISUALIZERS.build(model.cfg.visualizer)
+vis.dataset_meta = model.dataset_meta
+img = mmcv.imread('test_img.jpg')
+img = mmcv.imconvert(img, 'bgr', 'rgb')
+vis.add_datasample('vis', img, data_sample=res, draw_gt=False, out_file='result_inst.jpg')

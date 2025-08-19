@@ -3,7 +3,8 @@ from mmdet.registry import VISUALIZERS
 import mmcv
 
 cfg = 'configs/nuimages/mask-rcnn_r50_fpn_coco-2x_1x_nuim.py'
-model = init_detector(cfg, checkpoint=None, device='cuda:0')  # uses load_from in cfg
+ckpt = 'mask_rcnn_r50_fpn_coco-2x_1x_nuim_20201008_195238-b1742a60.pth'
+model = init_detector(cfg, checkpoint=ckpt, device='cuda:0')  # uses load_from in cfg
 
 res = inference_detector(model, 'test_img.jpg')
 

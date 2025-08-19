@@ -1,15 +1,17 @@
+# paint_test_v2.py  (MMDet 2.x)
 from mmdet.apis import init_detector, inference_detector
-from mmdet.registry import VISUALIZERS
 import mmcv
 
-cfg = 'configs/nuimages/mask-rcnn_r50_fpn_coco-2x_1x_nuim.py'
-ckpt = 'mask_rcnn_r50_fpn_coco-2x_1x_nuim_20201008_195238-b1742a60.pth'
-model = init_detector(cfg, checkpoint=ckpt, device='cuda:0')  # uses load_from in cfg
+CONFIG = 'configs/nuimages/mask-rcnn_r50_fpn_coco-2x_1x_nuim.py'
+CKPT   = 'mask_rcnn_r50_fpn_coco-2x_1x_nuim_20201008_195238-b1742a60.pth'
+IMG    = 'test_img.jpg'
 
-res = inference_detector(model, 'test_img.jpg')
+# Build model (MMDet 2.x)
+model = init_detector(CONFIG, CKPT, device='cuda:0')
 
-vis = VISUALIZERS.build(model.cfg.visualizer)
-vis.dataset_meta = model.dataset_meta
-img = mmcv.imread('test_img.jpg')
-img = mmcv.imconvert(img, 'bgr', 'rgb')
-vis.add_datasample('vis', img, data_sample=res, draw_gt=False, out_file='result_inst.jpg')
+# Inference
+result = inference_detector(model, IMG)
+
+# Visualize & save (MMDet 2.x)
+model.show_result(IMG, result, out_file='result_inst.jpg', score_thr=0.3)
+print('saved -> result_inst.jpg')

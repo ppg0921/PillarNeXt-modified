@@ -7,6 +7,7 @@ train_dataset:
   nsweeps: 10
   root_path: /home/qcraft/data/nuscenes
   info_path: infos_train_10sweeps_withvelo_filterZero.pkl
+  painted_path: ../nuScenes_data_root/painted
   resampling: True
   fuse_camera: True
   cam_name: 'CAM_FRONT'
@@ -16,5 +17,6 @@ val_dataset:
   nsweeps: 10
   root_path: ${data.train_dataset.root_path}
   info_path: infos_val_10sweeps_withvelo_filterZero.pkl
+  painted_path: ${data.train_dataset.painted_path}
   fuse_camera: True
   cam_name: 'CAM_FRONT'

@@ -11,6 +11,7 @@ def create_groundtruth_database(
     dataset_name,
     data_path,
     info_path,
+    painted_path,
     used_classes=None,
     db_path=None,
     dbinfo_path=None,
@@ -38,7 +39,8 @@ def create_groundtruth_database(
             create_database=True,
             fuse_camera=fuse_camera,
             cam_name=cam_name,
-            padding=padding
+            padding=padding,
+            painted_path=painted_path
         )
         nsweeps = dataset.nsweeps
     else:
@@ -51,7 +53,8 @@ def create_groundtruth_database(
             create_database=True,
             fuse_camera=fuse_camera,
             cam_name=cam_name,
-            padding=padding
+            padding=padding,
+            painted_path=painted_path
         )
         nsweeps = 1
 

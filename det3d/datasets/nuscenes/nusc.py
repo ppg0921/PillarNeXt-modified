@@ -9,6 +9,13 @@ from pyquaternion import Quaternion
 import PIL.Image as pil
 from os import path
 import time
+from functools import lru_cache
+import cv2
+
+
+@lru_cache(maxsize=4096)
+def _load_paint_npz(npz_path):
+    return np.load(npz_path)
 
 from nuscenes import NuScenes
 
@@ -42,7 +49,8 @@ class NuScenesDataset(BaseDataset):
                  version="v1.0-trainval",
                  fuse_camera=False,
                  cam_name="CAM_FRONT",
-                 padding=True):
+                 padding=True,
+                 painted_path=None):
 
         super(NuScenesDataset, self).__init__(
             root_path, info_path, sampler, loading_pipelines, augmentation, prepare_label, evaluations, create_database,
@@ -58,6 +66,8 @@ class NuScenesDataset(BaseDataset):
         self.padding = padding
         self.nusc = NuScenes(version=self.version, dataroot=str(
             self._root_path), verbose=False)
+        self.painted_path = painted_path
+        self.paint_K = 10
 
         if resampling:
             self.cbgs()
@@ -223,21 +233,6 @@ class NuScenesDataset(BaseDataset):
         pc_cam.rotate(Atotal)
         pc_cam.translate(Ttotal) 
         
-        # points_cam = pc_cam.points.T
-        # points_cam_old = pc_cam_old.points.T
-        
-        # if np.array_equal(points_cam, points_cam_old):
-        #     print("✅ All points match exactly, in order.")
-        # else:
-        #     # 2) find which rows differ
-        #     diffs = np.any(points_cam != points_cam_old, axis=1)   # length-N boolean
-        #     bad_idxs = np.nonzero(diffs)[0]
-        #     print(f"❌ {len(bad_idxs)} mismatches at indices: {bad_idxs}")
-
-        #     # 3) inspect a few examples
-        #     for i in bad_idxs[:5]:
-        #         print(f" index {i}: old={points_cam_old[i]} vs new={points_cam[i]}")
-        # t5 = time.time()
 
         return pc_cam, pc_lidar, time_lags_lidar
 
@@ -285,24 +280,25 @@ class NuScenesDataset(BaseDataset):
         # pc now is in the camera reference frame
 
         camera_token = sample['data'][cam_name]
-        cam = nusc.get('sample_data', camera_token)
-        cs_record = nusc.get('calibrated_sensor', cam['calibrated_sensor_token'])
+        cam_sd = nusc.get('sample_data', camera_token)
+        cs_record = nusc.get('calibrated_sensor', cam_sd['calibrated_sensor_token'])
+        
+        W_img = cam_sd.get('width', None)
+        H_img = cam_sd.get('height', None)
+        if W_img is None or H_img is None:
+            print("fall back to image fusion")
+            im = pil.open(path.join(nusc.dataroot, cam_sd['filename']))
+            W_img, H_img = im.size
 
         # t2 = time.time()
-        im = pil.open(path.join(nusc.dataroot, cam['filename']))
-        # t3 = time.time()
-        # print(f"[TIME][{cam_name}] image + calibration load: {t3 - t2:.4f}s")
+        # im = pil.open(path.join(nusc.dataroot, cam_sd['filename']))
+
         # Nuscenes pointcloud point dimensions start with x, y, and z coordinates.
         # depths = pc_cam.points[2, :]
 
-        # t4 = time.time()
         p_points, mask = project_points(pc_cam.points[:3, :],
                                         np.array(cs_record['camera_intrinsic']),
-                                        im.size, min_dist)
-        # t5 = time.time()
-        # print(f"[TIME][{cam_name}] project_points: {t5 - t4:.4f}s")
-        
-        # t6 = time.time()
+                                        (W_img, H_img), min_dist)
         # depths = depths[mask]
         p_points = p_points[:, mask]    # projected points
         # pc.points = pc.points[:, mask]  # masked points in camera FOV
@@ -311,68 +307,59 @@ class NuScenesDataset(BaseDataset):
         
         pc_lidar = pc_lidar[mask, :]
         time_lags_cam = time_lags_cam[mask, :]
-        
-        # t7 = time.time()
-        # print(f"[TIME][{cam_name}] apply mask: {t7 - t6:.4f}s")
+
         # pc = PointCloud(pc.points)
-
-        if fuse_camera:
+        if not fuse_camera:
+            return np.hstack([pc_lidar, time_lags_cam])
+        # if fuse_camera:
             # Get colors of the projected points from the RGB image
-            # t8 = time.time()
-            # colors = []
-            # for p in list(zip(p_points[0], p_points[1])):
-            #     colors.append(im.getpixel(p))
-            # t9 = time.time()
-            # print(f"[TIME][{cam_name}] color sampling: {t9 - t8:.4f}s")
-            
-# 2. Round projected coords to integer pixel indices
-            # t8 = time.time()
-            im_arr = np.asarray(im)  # shape (H, W, C)
-
+        npz_path = os.path.join(self.painted_path, f"{camera_token}.npz")
+        paint_feats = None
+        
+        try:
+            data = _load_paint_npz(npz_path) if '_load_paint_npz' in globals() else np.load(npz_path)
+            S = data['scores']
+            H_s, W_s, K = S.shape
+            if hasattr(self, 'paint_K') and K != self.paint_K:
+                print(f"[WARNING] Inconsistent paint_K: {K} vs {self.paint_K}") 
+                pass
+            if (H_s != H_img) or (W_s != W_img):
+                S = np.stack([
+                    cv2.resize(S[..., c].astype(np.float32), (W_img, H_img), interpolation=cv2.INTER_LINEAR)
+                    for c in range(S.shape[-1])
+                ], axis=-1)
+                
             xs = p_points[0].astype(np.int32)   # floor all values
             ys = p_points[1].astype(np.int32)
+            paint_feats = S[ys, xs, :].astype(np.float32, copy=False)
+        # im_arr = np.asarray(im)  # shape (H, W, C)
 
+        except FileNotFoundError:
+            # Missing .npz: fall back to zeros so pipeline can continue
+            print(f"[WARN] paint file missing for {camera_token}: {npz_path}")
+            K = getattr(self, 'paint_K', 10)
+            paint_feats = np.zeros((pc_lidar.shape[0], K), dtype=np.float32)
 
-            # 3. Keep idxs within [0..W-1] and [0..H-1]
-            # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
-            # ys = np.clip(ys, 0, im_arr.shape[0] - 1)
+        # 3. Keep idxs within [0..W-1] and [0..H-1]
+        # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
+        # ys = np.clip(ys, 0, im_arr.shape[0] - 1)
 
-            # 4. One‐shot color lookup: returns (N, C)
-            colors = im_arr[ys, xs]
-            # t9 = time.time()
+        # 4. One‐shot color lookup: returns (N, C)
+        # colors = im_arr[ys, xs]
             # print(f"[TIME][{cam_name}] color sampling v2: {t9 - t8:.4f}s")
             
             # print(f"[FUSION DEBUG] colors_new shape: {colors_new.shape}")
             
             # pc.add_dims(np.array(colors).T)
-        # print(f"[FUSION DEBUG] colors shape: {np.array(colors).shape}")
-        # colors = np.array(colors).T
-        # colors = np.array(colors)
-        # print(f"[FUSION DEBUG] colors shape: {colors.shape}")
-        
-            # if np.array_equal(colors, colors_new):
-            #     print("✅ All pixels match exactly, in order.")
-            # else:
-            #     # 2) find which rows differ
-            #     diffs = np.any(colors != colors_new, axis=1)   # length-N boolean
-            #     bad_idxs = np.nonzero(diffs)[0]
-            #     print(f"❌ {len(bad_idxs)} mismatches at indices: {bad_idxs}")
 
-            #     # 3) inspect a few examples
-            #     for i in bad_idxs[:5]:
-            #         print(f" index {i}: old={colors[i]} vs new={colors_new[i]}")
         # print(f"[FUSION DEBUG] colors shape after transpose: {colors.shape}")
         # back to lidar reference frame
         # pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
         # pc.translate(np.array(cs_record['translation']))
 
         # fused_pc = np.vstack([pc.points, time_lags, colors]).T
-        # t10 = time.time()
-        fused_pc = np.hstack([pc_lidar, time_lags_cam, colors])
-        # t11 = time.time()
-        # print(f"[TIME][{cam_name}] fusion process: {t11 - t10:.4f}s")
-        
-        # print(f"[TIME][{cam_name}] TOTAL get_camera_fused_pointcloud: {t11 - t0:.4f}s")
+        fused_pc = np.hstack([pc_lidar, time_lags_cam, paint_feats]).astype(np.float32)
+        # print(f"[FUSION DEBUG] fused_pc shape: {fused_pc.shape}\n")
 
         return fused_pc
 

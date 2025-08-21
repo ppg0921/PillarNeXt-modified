@@ -79,7 +79,7 @@ data:
       rate: 1.0
       gt_drop_percentage: 0
       gt_drop_max_keep_points: -1
-      point_dim: 8
+      point_dim: 15
     prepare_label:
       centermap:
         tasks: ${_tasks}
@@ -89,10 +89,14 @@ data:
     resampling: True
     version: v1.0-trainval
     fuse_camera: True
+    padding: False
     cam_name: 'CAM_FRONT'
+    painted_path: ${data.train_dataset.painted_path}
   val_dataset:
     class_names: ${_tasks}
     version: ${data.train_dataset.version}
     fuse_camera: True
+    padding: False
     cam_name: 'CAM_FRONT'
+    painted_path: ${data.train_dataset.painted_path}
 

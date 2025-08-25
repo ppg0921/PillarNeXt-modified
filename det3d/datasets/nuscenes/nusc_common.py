@@ -534,7 +534,7 @@ def eval_main(nusc, eval_version, res_path, eval_set, output_dir):
         gt_boxes=gt_boxes       
     )
     nusc_eval.meta = meta
-    _ = nusc_eval.main(plot_examples=5,)
+    _ = nusc_eval.main(plot_examples=10,)
 
 
 if __name__ == '__main__':

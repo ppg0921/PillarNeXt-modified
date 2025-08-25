@@ -374,6 +374,22 @@ class CenterHead(nn.Module):
                     (selected_scores, scores_class[selected]), dim=0)
                 selected_labels = torch.cat(
                     (selected_labels, labels_class[selected]), dim=0)
+            # print(f"selected_boxes.numel(): {selected_boxes.numel()}, hasattr(): {hasattr(test_cfg.nms, 'global_nms_iou_threshold')}, test_cfg.global_nms: {getattr(test_cfg, 'global_nms', 'N/A')}")
+            if selected_boxes.numel() > 0 and hasattr(test_cfg.nms, "global_nms_iou_threshold") and test_cfg.global_nms:
+                print("Performing global NMS")
+                boxes_for_global = selected_boxes[:, [0, 1, 2, 3, 4, 5, -1]]  # [x,y,z,w,l,h,yaw]
+
+                keep_global = box_torch_ops.rotate_nms_pcdet(
+                    boxes_for_global,
+                    selected_scores,
+                    thresh=test_cfg.nms.global_nms_iou_threshold,
+                    pre_maxsize=min(test_cfg.nms.nms_post_max_size, selected_boxes.shape[0]),
+                    post_max_size=getattr(test_cfg.nms, "global_post_max_size", selected_boxes.shape[0])
+                )
+
+                selected_boxes  = selected_boxes[keep_global]
+                selected_scores = selected_scores[keep_global]
+                selected_labels = selected_labels[keep_global]
 
             prediction_dict = {
                 'box3d_lidar': selected_boxes,
@@ -381,6 +397,7 @@ class CenterHead(nn.Module):
                 'label_preds': selected_labels
             }
 
+        
             prediction_dicts.append(prediction_dict)
 
         return prediction_dicts

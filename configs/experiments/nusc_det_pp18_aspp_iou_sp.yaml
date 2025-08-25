@@ -40,10 +40,12 @@ model:
     post_center_limit_range: [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
     max_per_img: 500
     nms_type: iou3d
+    global_nms: False
     nms:
       nms_pre_max_size: 1000
       nms_post_max_size: 83
-      nms_iou_threshold: [[0.2], [0.2, 0.2], [0.2, 0.2], [0.2], [0.2, 0.2], [0.2, 0.2]]
+      nms_iou_threshold: [[0.15], [0.2, 0.2], [0.15, 0.2], [0.2], [0.2, 0.2], [0.2, 0.2]]
+      global_nms_iou_threshold: 0.35
     score_threshold: 0.1
     pc_range: ${model.reader.pc_range}
     voxel_size: ${model.reader.voxel_size}

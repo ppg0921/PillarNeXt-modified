@@ -316,6 +316,9 @@ class NuScenesDataset(BaseDataset):
         npz_path = os.path.join(self.painted_path, f"{camera_token}.npz")
         paint_feats = None
         
+        xs = p_points[0].astype(np.int32)   # floor all values
+        ys = p_points[1].astype(np.int32)
+        
         try:
             data = _load_paint_npz(npz_path) if '_load_paint_npz' in globals() else np.load(npz_path)
             S = data['scores']
@@ -329,10 +332,8 @@ class NuScenesDataset(BaseDataset):
                     for c in range(S.shape[-1])
                 ], axis=-1)
                 
-            xs = p_points[0].astype(np.int32)   # floor all values
-            ys = p_points[1].astype(np.int32)
+            
             paint_feats = S[ys, xs, :].astype(np.float32, copy=False)
-        
 
         except FileNotFoundError:
             # Missing .npz: fall back to zeros so pipeline can continue
@@ -340,10 +341,6 @@ class NuScenesDataset(BaseDataset):
             K = getattr(self, 'paint_K', 10)
             paint_feats = np.zeros((pc_lidar.shape[0], K), dtype=np.float32)
         im_arr = np.asarray(im)  # shape (H, W, C)
-        # 3. Keep idxs within [0..W-1] and [0..H-1]
-        # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
-        # ys = np.clip(ys, 0, im_arr.shape[0] - 1)
-
         # 4. One‐shot color lookup: returns (N, C)
         colors = im_arr[ys, xs]
             # print(f"[TIME][{cam_name}] color sampling v2: {t9 - t8:.4f}s")

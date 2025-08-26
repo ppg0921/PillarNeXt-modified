@@ -291,7 +291,7 @@ class NuScenesDataset(BaseDataset):
             W_img, H_img = im.size
 
         # t2 = time.time()
-        # im = pil.open(path.join(nusc.dataroot, cam_sd['filename']))
+        im = pil.open(path.join(nusc.dataroot, cam_sd['filename']))
 
         # Nuscenes pointcloud point dimensions start with x, y, and z coordinates.
         # depths = pc_cam.points[2, :]
@@ -332,20 +332,20 @@ class NuScenesDataset(BaseDataset):
             xs = p_points[0].astype(np.int32)   # floor all values
             ys = p_points[1].astype(np.int32)
             paint_feats = S[ys, xs, :].astype(np.float32, copy=False)
-        # im_arr = np.asarray(im)  # shape (H, W, C)
+        
 
         except FileNotFoundError:
             # Missing .npz: fall back to zeros so pipeline can continue
             print(f"[WARN] paint file missing for {camera_token}: {npz_path}")
             K = getattr(self, 'paint_K', 10)
             paint_feats = np.zeros((pc_lidar.shape[0], K), dtype=np.float32)
-
+        im_arr = np.asarray(im)  # shape (H, W, C)
         # 3. Keep idxs within [0..W-1] and [0..H-1]
         # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
         # ys = np.clip(ys, 0, im_arr.shape[0] - 1)
 
         # 4. One‐shot color lookup: returns (N, C)
-        # colors = im_arr[ys, xs]
+        colors = im_arr[ys, xs]
             # print(f"[TIME][{cam_name}] color sampling v2: {t9 - t8:.4f}s")
             
             # print(f"[FUSION DEBUG] colors_new shape: {colors_new.shape}")
@@ -358,7 +358,7 @@ class NuScenesDataset(BaseDataset):
         # pc.translate(np.array(cs_record['translation']))
 
         # fused_pc = np.vstack([pc.points, time_lags, colors]).T
-        fused_pc = np.hstack([pc_lidar, time_lags_cam, paint_feats]).astype(np.float32)
+        fused_pc = np.hstack([pc_lidar, time_lags_cam, paint_feats, colors]).astype(np.float32)
         # print(f"[FUSION DEBUG] fused_pc shape: {fused_pc.shape}\n")
 
         return fused_pc

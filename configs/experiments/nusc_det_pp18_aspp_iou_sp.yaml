@@ -11,7 +11,7 @@ defaults:
 _tasks: [["car"], ["truck", "construction_vehicle"], ["bus", "trailer"], ["barrier"], ["motorcycle", "bicycle"], ["pedestrian", "traffic_cone"] ]
 model:
   reader:
-    num_input_features: 15
+    num_input_features: 18
     voxel_size: [0.075, 0.075, 8]
     pc_range: [-50.4, -50.4, -5.0, 50.4, 50.4, 3.0]
   backbone:
@@ -44,7 +44,7 @@ model:
     nms:
       nms_pre_max_size: 1000
       nms_post_max_size: 83
-      nms_iou_threshold: [[0.1], [0.2, 0.2], [0.1, 0.2], [0.2], [0.2, 0.2], [0.2, 0.2]]
+      nms_iou_threshold: [[0.2], [0.2, 0.2], [0.2, 0.2], [0.2], [0.2, 0.2], [0.2, 0.2]]
       global_nms_iou_threshold: 0.35
     score_threshold: 0.1
     pc_range: ${model.reader.pc_range}
@@ -81,7 +81,7 @@ data:
       rate: 1.0
       gt_drop_percentage: 0
       gt_drop_max_keep_points: -1
-      point_dim: 15
+      point_dim: 18
     prepare_label:
       centermap:
         tasks: ${_tasks}

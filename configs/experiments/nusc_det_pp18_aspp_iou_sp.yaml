@@ -44,7 +44,7 @@ model:
     nms:
       nms_pre_max_size: 1000
       nms_post_max_size: 83
-      nms_iou_threshold: [[0.15], [0.2, 0.2], [0.15, 0.2], [0.2], [0.2, 0.2], [0.2, 0.2]]
+      nms_iou_threshold: [[0.1], [0.2, 0.2], [0.1, 0.2], [0.2], [0.2, 0.2], [0.2, 0.2]]
       global_nms_iou_threshold: 0.35
     score_threshold: 0.1
     pc_range: ${model.reader.pc_range}

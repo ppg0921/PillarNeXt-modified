@@ -344,14 +344,6 @@ class NuScenesDataset(BaseDataset):
         # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
         # ys = np.clip(ys, 0, im_arr.shape[0] - 1)
 
-        # 4. One‐shot color lookup: returns (N, C)
-        # colors = im_arr[ys, xs]
-            # print(f"[TIME][{cam_name}] color sampling v2: {t9 - t8:.4f}s")
-            
-            # print(f"[FUSION DEBUG] colors_new shape: {colors_new.shape}")
-            
-            # pc.add_dims(np.array(colors).T)
-
         # print(f"[FUSION DEBUG] colors shape after transpose: {colors.shape}")
         # back to lidar reference frame
         # pc.rotate(Quaternion(cs_record['rotation']).rotation_matrix)
@@ -368,23 +360,6 @@ class NuScenesDataset(BaseDataset):
         
         if not self.fuse_camera:
 
-            # lidar_path = info["lidar_path"]
-
-            # points = self.read_file(str(lidar_path))
-
-            # sweep_points_list = [points]
-            # sweep_times_list = [np.zeros((points.shape[0], 1))]
-            # # stores the time lag for each point relative to the reference frame
-            
-            # for i in range(len(info["sweeps"])):
-            #     sweep = info["sweeps"][i]
-            #     points_sweep, times_sweep = self.read_sweep(sweep)
-            #     sweep_points_list.append(points_sweep)
-            #     sweep_times_list.append(times_sweep)
-
-            # points = np.concatenate(sweep_points_list, axis=0)
-            # times = np.concatenate(sweep_times_list, axis=0).astype(points.dtype)
-            
             points, times = self.read_sweep_from_info(info)
 
             res["points"] = np.hstack([points, times])
@@ -420,11 +395,6 @@ class NuScenesDataset(BaseDataset):
             # print(f"[TIME] Total get_camera_fused_pointcloud: {t2 - t1:.4f}s")
             fused_pts = np.concatenate(fused_list, axis=0)
             
-            # fused_xyz_rounded = np.round(fused_pts[:, :3], decimals=3)
-            # _, unique_indices = np.unique(fused_xyz_rounded, axis=0, return_index=True)
-            # # print(f"[DEBUG] eliminating {fused_pts.shape[0] - len(unique_indices)} duplicate points")
-            # fused_pts = fused_pts[unique_indices]
-            
             scale = 1000  # same as rounding to 3 decimals for faster unique operation
             xyz_int = np.rint(fused_pts[:, :3] * scale).astype(np.int32)
 
@@ -454,29 +424,9 @@ class NuScenesDataset(BaseDataset):
                 fused_struct = self.to_struct(fused_xyz)
                 full_struct = self.to_struct(full_xyz)
 
-                # fused_xyz_set = set(
-                #     tuple(np.round(xyz.astype(np.float64), 3)) for xyz in fused_pts[:, :3]
-                # )
-                # full_xyz_rounded = np.round(full_points[:, :3].astype(np.float64), 3)
                 
-                # idx_full  = np.random.choice(full_xyz_rounded.shape[0], 10, replace=False)
-                # idx_fused = np.random.choice(fused_xyz_rounded.shape[0], 10, replace=False)
-
-                # print("=== DEBUG SAMPLE POINTS ===")
-                # print("Full (rounded) XYZ:")
-                # print(full_xyz_rounded[idx_full, :3])  # full_points already filtered and rounded above
-
-                # print("\nFused (rounded) XYZ:")
-                # print(fused_xyz_rounded[idx_fused, :3])  # fused_pts already filtered and rounded above
                 mask_not_in_fused = ~np.isin(full_struct, fused_struct)
-                # print(f"[DEBUG] {mask_not_in_fused.sum()} points not in fused points")
-                # print(f"[DEBUG] Number of points in full_xyz also in fused_xyz: {(~mask_not_in_fused).sum()} / {full_xyz.shape[0]}")
-                # print(f"[DEBUG] {mask_not_in_fused.sum()} points not in fused points")
-                # common = 0
-                # for xyz in full_xyz_rounded:
-                #     if tuple(xyz) in fused_xyz_set:
-                #         common += 1
-                # print(f"[DEBUG] Number of points in full_xyz also in fused_xyz: {common} / {full_xyz_rounded.shape[0]}")
+                
                 unseen_points = full_points[mask_not_in_fused]
                 unseen_time_lags = time_lags[mask_not_in_fused]
                 black_rgb = np.zeros((unseen_points.shape[0], 3), dtype=np.float32)
@@ -489,10 +439,7 @@ class NuScenesDataset(BaseDataset):
                 # print(f"[TIME] Padding process: {t5 - t4:.4f}s")
             else:
                 res["points"] = fused_pts.astype(np.float32)
-            
-            
-            # t_load_end = time.time()
-            # print(f"[TIME] Total load_pointcloud with camera fusion: {t_load_end - t_load_start:.4f}s")
+
             # print(f"[DEBUG] points.shape={res['points'].shape}")
             return res
 

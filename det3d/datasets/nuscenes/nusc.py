@@ -11,6 +11,7 @@ from os import path
 import time
 from functools import lru_cache
 import cv2
+from nuscenes.utils.data_classes import RadarPointCloud
 
 
 @lru_cache(maxsize=4096)
@@ -112,6 +113,26 @@ class NuScenesDataset(BaseDataset):
         curr_times = sweep["time_lag"] * np.ones((1, points_sweep.shape[1]))
 
         return points_sweep.T, curr_times.T
+    
+    def read_radar_file(self, path):
+        rpc = RadarPointCloud.from_file(os.path.join(self._root_path, path))
+        # select x, y, z, rcs only
+        return rpc.points[[0, 1, 2, 5], :].T   # (N, 4)
+    
+    def read_radar_sweep(self, sweep, min_distance=1.0):
+        points_sweep = self.read_radar_file(str(sweep["radar_path"])).T   # (4, N)
+
+        nbr_points = points_sweep.shape[1]
+        if sweep["transform_matrix"] is not None and nbr_points > 0:
+            points_sweep[:3, :] = sweep["transform_matrix"].dot(
+                np.vstack((points_sweep[:3, :], np.ones(nbr_points))))[:3, :]
+
+        # same near-point removal
+        points_sweep = self.remove_close(points_sweep, min_distance)
+        curr_times = sweep["time_lag"] * np.ones((1, points_sweep.shape[1]))
+
+        return points_sweep.T, curr_times.T   # (N, 4), (N, 1)
+
 
     @staticmethod
     def remove_close(points, radius: float):
@@ -149,6 +170,23 @@ class NuScenesDataset(BaseDataset):
         # print(f"[DEBUG] Loaded pointcloud with shape {points.shape} and times shape {times.shape}\n")
         return points, times
     
+    def read_radar_from_info(self, info):
+        sweep_points_list = []
+        sweep_times_list = []
+        
+        for sweep in info.get("radar_sweeps", []):
+            pts, times = self.read_radar_sweep(sweep)
+            sweep_points_list.append(pts)
+            sweep_times_list.append(times)
+
+        if len(sweep_points_list) == 0:
+            return np.zeros((0, 4), dtype=np.float32), np.zeros((0, 1), dtype=np.float32)
+
+        points = np.concatenate(sweep_points_list, axis=0)
+        times = np.concatenate(sweep_times_list, axis=0).astype(points.dtype)
+        return points, times
+    
+    
     def load_and_transform_lidar_to_cam(self, nusc: NuScenes, sample, info,
                                     cam_name='CAM_FRONT', pc_full=None, time_lags_full=None,
                                     nsweeps=10):
@@ -177,7 +215,8 @@ class NuScenesDataset(BaseDataset):
 
         # t2 = time.time()
         # pc, time_lags = self.read_sweep_from_info(info)
-
+        
+        # direct copy, no need to load for each camera
         pc_lidar = pc_full.copy()
         time_lags_lidar = time_lags_full.copy()
         # t25 = time.time()
@@ -235,6 +274,81 @@ class NuScenesDataset(BaseDataset):
         
 
         return pc_cam, pc_lidar, time_lags_lidar
+    
+    
+    def load_and_transform_radar_to_cam(self, nusc: NuScenes, sample, info,
+                                        cam_name='CAM_FRONT',
+                                        radar_pc_full=None, radar_time_lags_full=None,
+                                        nsweeps=10):
+        """
+        Load RADAR points (already merged & expressed in the LIDAR_TOP frame) and
+        transform them to the camera coordinates.
+
+        Args:
+            nusc: NuScenes instance
+            sample: NuScenes sample dict
+            cam_name: target camera name (e.g. 'CAM_FRONT')
+            radar_pc_full: (N,4) np.ndarray in LIDAR_TOP frame [x,y,z,rcs]
+            radar_time_lags_full: (N,1) np.ndarray of time lags per point
+
+        Returns:
+            pc_cam_radar: LidarPointCloud with .points in the camera frame (shape 4xN)
+                        columns still contain [x,y,z,rcs] (we're just using the class as a holder)
+            pc_radar:     original (N,4) radar points (LIDAR_TOP frame)
+            time_lags:    (N,1) time lags (unchanged)
+        """
+        # If not provided, you could plug your merged radar reader here:
+        # radar_pc_full, radar_time_lags_full = self.read_radar_from_info(info)
+
+        if radar_pc_full is None:
+            # Graceful fallback to empty
+            radar_pc_full = np.zeros((0, 4), dtype=np.float32)
+        if radar_time_lags_full is None:
+            radar_time_lags_full = np.zeros((radar_pc_full.shape[0], 1), dtype=np.float32)
+
+        # Create a 4xN array holder for transformation (same as your LiDAR code)
+        pc_cam_radar = LidarPointCloud(radar_pc_full.T)  # (4, N)
+
+        # We reuse the SAME transform chain you used for LiDAR:
+        # LIDAR_TOP(sensor @ t_lidar) -> ego(t_lidar) -> global -> ego(t_cam) -> camera
+        pointsensor_token = sample['data']['LIDAR_TOP']        # start frame is LIDAR_TOP
+        pointsensor = nusc.get('sample_data', pointsensor_token)
+
+        camera_token = sample['data'][cam_name]
+        cam = nusc.get('sample_data', camera_token)
+
+        # Step 1: sensor(LIDAR_TOP) -> ego (at lidar time)
+        cs_record = nusc.get('calibrated_sensor', pointsensor['calibrated_sensor_token'])
+        R1 = Quaternion(cs_record['rotation']).rotation_matrix
+        T1 = np.array(cs_record['translation'])
+
+        # Step 2: ego(lidar time) -> global
+        poserecord = nusc.get('ego_pose', pointsensor['ego_pose_token'])
+        R2 = Quaternion(poserecord['rotation']).rotation_matrix
+        T2 = np.array(poserecord['translation'])
+
+        # Step 3: global -> ego(camera time)
+        poserecord = nusc.get('ego_pose', cam['ego_pose_token'])
+        R3 = Quaternion(poserecord['rotation']).rotation_matrix.T
+        T3 = -np.array(poserecord['translation'])
+        T3 = R3.dot(T3)
+
+        # Step 4: ego(camera time) -> camera
+        cs_record = nusc.get('calibrated_sensor', cam['calibrated_sensor_token'])
+        R4 = Quaternion(cs_record['rotation']).rotation_matrix.T
+        T4 = -np.array(cs_record['translation'])
+        T4 = R4.dot(T4)
+
+        # Compose total transform (identical to your lidar code)
+        Atotal = R4.dot(R3.dot(R2.dot(R1)))
+        Ttotal = R4.dot(R3.dot(R2.dot(T1) + T2) + T3) + T4
+
+        # Apply to radar points (which are currently in the LIDAR_TOP frame)
+        pc_cam_radar.rotate(Atotal)
+        pc_cam_radar.translate(Ttotal)
+
+        # Return the camera-frame radar cloud, plus original radar cloud and times
+        return pc_cam_radar, radar_pc_full, radar_time_lags_full
 
     def get_camera_fused_pointcloud(self, nusc: NuScenes, sample, info,
                                 cam_name='CAM_FRONT', pc_full=None, time_lags_full=None,
@@ -409,7 +523,19 @@ class NuScenesDataset(BaseDataset):
             fused_pts = fused_pts[unique_indices]
             # t3 = time.time()
             # print(f"[TIME] Camera fusion + dedup: {t3 - t2:.4f}s")
-            
+            radar_points, radar_times = self.read_radar_from_info(info)
+            R_xyz = radar_points[:, :3]
+            R_rcs = radar_points[:, 3:4]
+            R_intensity = np.zeros((R_xyz.shape[0], 1), dtype=np.float32)
+            R_paint = np.zeros((R_xyz.shape[0], 10), dtype=np.float32)
+            radar_total_points = np.hstack([R_xyz, R_intensity, radar_times, R_paint, R_rcs])
+            L_rcs = np.zeros((fused_pts.shape[0], 1), dtype=np.float32)
+            fused_pts = np.hstack([fused_pts, L_rcs]).astype(np.float32)
+
+            fused_pts = np.concatenate([fused_pts, radar_total_points], axis=0)
+            # print(f"[DEBUG] fused_pts first 5 points: {fused_pts[:5]}")
+            # print(f"[DEBUG] fused_pts last 5 points: {fused_pts[-5:]}")
+
             if self.padding:
                 # t4 = time.time()
                 
@@ -440,7 +566,7 @@ class NuScenesDataset(BaseDataset):
             else:
                 res["points"] = fused_pts.astype(np.float32)
 
-            # print(f"[DEBUG] points.shape={res['points'].shape}")
+            print(f"[DEBUG] points.shape={res['points'].shape}")
             return res
 
     def evaluation(self, detections, output_dir=None, testset=False):

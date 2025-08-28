@@ -19,6 +19,14 @@ from nuscenes.eval.common.loaders import load_gt_of_sample_tokens
 
 import fire
 import os
+RADAR_CHANNELS = [
+    "RADAR_FRONT",
+    "RADAR_FRONT_LEFT",
+    "RADAR_FRONT_RIGHT",
+    "RADAR_BACK_LEFT",
+    "RADAR_BACK_RIGHT",
+]
+
 
 general_to_detection = {
     "human.pedestrian.adult": "pedestrian",
@@ -314,8 +322,27 @@ def get_boxes(nusc, sample_data_token, selected_anntokens = None):
 
     return box_list
 
+def build_radar_entry(nusc, ref_from_car, car_from_global, ref_time, sd_rec):
+    from nuscenes.utils.geometry_utils import transform_matrix
+    radar_file = os.path.join(nusc.dataroot, sd_rec["filename"])
+    if not os.path.exists(radar_file):
+        return None
+    pose_rec = nusc.get("ego_pose", sd_rec["ego_pose_token"])
+    global_from_car = transform_matrix(pose_rec["translation"], Quaternion(pose_rec["rotation"]), inverse=False)
+    cs_rec = nusc.get("calibrated_sensor", sd_rec["calibrated_sensor_token"])
+    car_from_current = transform_matrix(cs_rec["translation"], Quaternion(cs_rec["rotation"]), inverse=False)
+    tm = reduce(np.dot, [ref_from_car, car_from_global, global_from_car, car_from_current])
+    time_lag = ref_time - 1e-6 * sd_rec["timestamp"]
+    return {
+        "radar_path": sd_rec["filename"],
+        "sample_data_token": sd_rec["token"],
+        "transform_matrix": tm,
+        "global_from_car": global_from_car,
+        "car_from_current": car_from_current,
+        "time_lag": time_lag,
+    }
 
-def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, **kwargs):
+def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, nsweeps_radar=5, **kwargs):
     from nuscenes.utils.geometry_utils import transform_matrix
 
     train_nusc_infos = []
@@ -356,6 +383,7 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, **kwargs):
             "cam_path": cam_sd_rec['filename'],
             "token": sample["token"],
             "sweeps": [],
+            "radar_sweeps": [],
             "ref_from_car": ref_from_car,
             "car_from_global": car_from_global,
             "timestamp": ref_time,
@@ -407,6 +435,28 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, **kwargs):
                 sweeps.append(sweep)
 
         info["sweeps"] = sweeps
+
+        merged_radar_list = []
+        for ch in RADAR_CHANNELS:
+            if ch not in sample["data"]:
+                continue
+            ch_sd_rec = nusc.get("sample_data", sample["data"][ch])
+            
+            entry = build_radar_entry(nusc, ref_from_car, car_from_global, ref_time, ch_sd_rec)
+            if entry is not None:
+                merged_radar_list.append(entry)
+
+            prev_rec = ch_sd_rec
+            added = 1
+            while added < nsweeps_radar and prev_rec["prev"] != "":
+                prev_rec = nusc.get("sample_data", prev_rec["prev"])
+                entry = build_radar_entry(nusc, ref_from_car, car_from_global, ref_time, prev_rec)
+                if entry is not None:
+                    merged_radar_list.append(entry)
+                added += 1
+        
+        info["radar_sweeps"] = merged_radar_list
+        # print(f"[RADAR DEBUG] info[\"radar_sweeps\"]: {merged_radar_list}")
 
         if sample["scene_token"] in train_scenes:
             annotations = [nusc.get("sample_annotation", token)

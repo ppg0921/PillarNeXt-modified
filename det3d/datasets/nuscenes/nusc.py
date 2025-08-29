@@ -126,7 +126,7 @@ class NuScenesDataset(BaseDataset):
         nbr_points = points_sweep.shape[1]
         if sweep["transform_matrix"] is not None and nbr_points > 0:
             # print(f"sd token: {sweep['sample_data_token']}")
-            print(f"transform matrix: {sweep['transform_matrix']}")
+            # print(f"transform matrix: {sweep['transform_matrix']}")
             points_sweep[:3, :] = sweep["transform_matrix"].dot(
                 np.vstack((points_sweep[:3, :], np.ones(nbr_points))))[:3, :]
         # same near-point removal
@@ -392,7 +392,7 @@ class NuScenesDataset(BaseDataset):
                                                                        pc_full=pc_full, time_lags_full=time_lags_full,
                                                                        nsweeps=nsweeps)
 
-        pc_cam_radar, pc_radar, time_lags_cam_radar = self.load_and_transform_radar_to_cam(nusc, sample, info, cam_name=cam_name, radar_pc_full=rpc_full, radar_time_lags_full=radar_time_lags_full)
+        pc_cam_radar, pc_radar, time_lags_cam_radar = self.load_and_transform_lidar_to_cam(nusc, sample, info, cam_name=cam_name, pc_full=rpc_full, time_lags_full=radar_time_lags_full)
         # t1 = time.time()
         # print(f"[TIME][{cam_name}] load_and_transform_lidar_to_cam: {t1 - t0:.4f}s")
         # pc is already in the type of PointCloud
@@ -503,7 +503,7 @@ class NuScenesDataset(BaseDataset):
         os.makedirs(out_dir, exist_ok=True)
         out_path = os.path.join(out_dir, f"{cam_name}_{camera_token}.jpg")
         cv2.imwrite(out_path, img_bgr)
-        print(f"[VIS] Saved LiDAR-on-camera visualization to: {out_path}, cam={cam_name}, pc_lidar.shape={pc_lidar.shape}, pc_radar.shape={pc_radar.shape}, paint_feats.shape={paint_feats.shape}")
+        # print(f"[VIS] Saved LiDAR-on-camera visualization to: {out_path}, cam={cam_name}, pc_lidar.shape={pc_lidar.shape}, pc_radar.shape={pc_radar.shape}, paint_feats.shape={paint_feats.shape}")
         # 3. Keep idxs within [0..W-1] and [0..H-1]
         # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
         # ys = np.clip(ys, 0, im_arr.shape[0] - 1)

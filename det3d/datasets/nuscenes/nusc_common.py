@@ -453,7 +453,7 @@ def _fill_trainval_infos(nusc, train_scenes, val_scenes, nsweeps=10, nsweeps_rad
                 entry = build_radar_entry(nusc, ref_from_car, car_from_global, ref_time, prev_rec)
                 if entry is not None:
                     merged_radar_list.append(entry)
-                added += 1
+                    added += 1
         
         info["radar_sweeps"] = merged_radar_list
         # print(f"[RADAR DEBUG] info[\"radar_sweeps\"]: {merged_radar_list}")

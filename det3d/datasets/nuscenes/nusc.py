@@ -12,7 +12,7 @@ import time
 from functools import lru_cache
 import cv2
 from nuscenes.utils.data_classes import RadarPointCloud
-
+import matplotlib.cm as cm
 
 @lru_cache(maxsize=4096)
 def _load_paint_npz(npz_path):
@@ -69,6 +69,7 @@ class NuScenesDataset(BaseDataset):
             self._root_path), verbose=False)
         self.painted_path = painted_path
         self.paint_K = 10
+        self.painted_vis_path_radar = "/home/betty/CMU-intern/pillarnext/project_visualization/radar/"
 
         if resampling:
             self.cbgs()
@@ -124,9 +125,10 @@ class NuScenesDataset(BaseDataset):
 
         nbr_points = points_sweep.shape[1]
         if sweep["transform_matrix"] is not None and nbr_points > 0:
+            # print(f"sd token: {sweep['sample_data_token']}")
+            print(f"transform matrix: {sweep['transform_matrix']}")
             points_sweep[:3, :] = sweep["transform_matrix"].dot(
                 np.vstack((points_sweep[:3, :], np.ones(nbr_points))))[:3, :]
-
         # same near-point removal
         points_sweep = self.remove_close(points_sweep, min_distance)
         curr_times = sweep["time_lag"] * np.ones((1, points_sweep.shape[1]))
@@ -315,6 +317,7 @@ class NuScenesDataset(BaseDataset):
         pointsensor = nusc.get('sample_data', pointsensor_token)
 
         camera_token = sample['data'][cam_name]
+        # print(f"camera token: {camera_token}")
         cam = nusc.get('sample_data', camera_token)
 
         # Step 1: sensor(LIDAR_TOP) -> ego (at lidar time)
@@ -354,7 +357,8 @@ class NuScenesDataset(BaseDataset):
                                 cam_name='CAM_FRONT', pc_full=None, time_lags_full=None,
                                 min_dist=1.0,
                                 nsweeps=10,
-                                fuse_camera=True):
+                                fuse_camera=True,
+                                rpc_full=None, radar_time_lags_full=None):
         """
         Loads points from lidar pointcloud, finds the points that are within a
         camera's FOV, and the color of the corresponding points in the camera's
@@ -387,6 +391,8 @@ class NuScenesDataset(BaseDataset):
         pc_cam, pc_lidar, time_lags_cam = self.load_and_transform_lidar_to_cam(nusc, sample, info, cam_name=cam_name, 
                                                                        pc_full=pc_full, time_lags_full=time_lags_full,
                                                                        nsweeps=nsweeps)
+
+        pc_cam_radar, pc_radar, time_lags_cam_radar = self.load_and_transform_radar_to_cam(nusc, sample, info, cam_name=cam_name, radar_pc_full=rpc_full, radar_time_lags_full=radar_time_lags_full)
         # t1 = time.time()
         # print(f"[TIME][{cam_name}] load_and_transform_lidar_to_cam: {t1 - t0:.4f}s")
         # pc is already in the type of PointCloud
@@ -405,7 +411,7 @@ class NuScenesDataset(BaseDataset):
             W_img, H_img = im.size
 
         # t2 = time.time()
-        # im = pil.open(path.join(nusc.dataroot, cam_sd['filename']))
+        im = pil.open(path.join(nusc.dataroot, cam_sd['filename']))
 
         # Nuscenes pointcloud point dimensions start with x, y, and z coordinates.
         # depths = pc_cam.points[2, :]
@@ -413,6 +419,12 @@ class NuScenesDataset(BaseDataset):
         p_points, mask = project_points(pc_cam.points[:3, :],
                                         np.array(cs_record['camera_intrinsic']),
                                         (W_img, H_img), min_dist)
+        
+        p_points_radar, mask_radar = project_points(pc_cam_radar.points[:3, :],
+                                                     np.array(cs_record['camera_intrinsic']),
+                                                     (W_img, H_img), min_dist)
+        # print(f"pc_cam_radar.points.shape: {pc_cam_radar.points.shape}")
+        p_points_radar = p_points_radar[:, mask_radar]    # projected points
         # depths = depths[mask]
         p_points = p_points[:, mask]    # projected points
         # pc.points = pc.points[:, mask]  # masked points in camera FOV
@@ -421,6 +433,9 @@ class NuScenesDataset(BaseDataset):
         
         pc_lidar = pc_lidar[mask, :]
         time_lags_cam = time_lags_cam[mask, :]
+        
+        pc_radar = pc_radar[mask_radar, :]
+        time_lags_cam_radar = time_lags_cam_radar[mask_radar, :]
 
         # pc = PointCloud(pc.points)
         if not fuse_camera:
@@ -445,7 +460,7 @@ class NuScenesDataset(BaseDataset):
                 
             xs = p_points[0].astype(np.int32)   # floor all values
             ys = p_points[1].astype(np.int32)
-            paint_feats = S[ys, xs, :].astype(np.float32, copy=False)
+            paint_feats = S[ys, xs, :]
         # im_arr = np.asarray(im)  # shape (H, W, C)
 
         except FileNotFoundError:
@@ -454,6 +469,41 @@ class NuScenesDataset(BaseDataset):
             K = getattr(self, 'paint_K', 10)
             paint_feats = np.zeros((pc_lidar.shape[0], K), dtype=np.float32)
 
+        xs_radar = p_points_radar[0].astype(np.int32)   # floor all values
+        ys_radar = p_points_radar[1].astype(np.int32)
+        # print(f"xs_radar.shape: {xs_radar.shape}, ys_radar.shape: {ys_radar.shape}")
+        
+        intens = pc_radar[:, 3].astype(np.float32)
+
+        # 2) Robust normalize intensity to [0, 1] using percentiles
+        p1, p99 = np.percentile(intens, [1, 99]) if intens.size > 0 else (0.0, 1.0)
+        scale = max(p99 - p1, 1e-6)
+        t = np.clip((intens - p1) / scale, 0.0, 1.0)  # 0=weak, 1=strong
+        
+        jet = cm.get_cmap('jet')
+        colors_rgb = (jet(t)[:, :3] * 255).astype(np.uint8)  # shape (N,3), RGB
+        colors_bgr = colors_rgb[:, ::-1]  # convert RGB → BGR for OpenCV
+        
+        try:
+            depths_cam = pc_cam_radar.points[2, mask_radar]  # z in camera frame for masked points
+            draw_order = np.argsort(depths_cam)[::-1]  # far → near
+        except Exception:
+            draw_order = np.arange(xs_radar.shape[0])
+        img_bgr = cv2.cvtColor(np.asarray(im), cv2.COLOR_RGB2BGR).copy()
+        inside = (xs_radar >= 0) & (ys_radar >= 0) & (xs_radar < W_img) & (ys_radar < H_img)
+        xs_i = xs_radar[inside][draw_order]
+        ys_i = ys_radar[inside][draw_order]
+        col_i = colors_bgr[inside][draw_order]
+
+        # Draw filled circles (radius=2). Increase radius for denser highlights.
+        for x, y, c in zip(xs_i, ys_i, col_i):
+            cv2.circle(img_bgr, (int(x), int(y)), 2, tuple(int(v) for v in c.tolist()), -1)
+        
+        out_dir = getattr(self, 'painted_vis_path_radar', os.path.join(self.painted_path, "vis"))
+        os.makedirs(out_dir, exist_ok=True)
+        out_path = os.path.join(out_dir, f"{cam_name}_{camera_token}.jpg")
+        cv2.imwrite(out_path, img_bgr)
+        print(f"[VIS] Saved LiDAR-on-camera visualization to: {out_path}, cam={cam_name}, pc_lidar.shape={pc_lidar.shape}, pc_radar.shape={pc_radar.shape}, paint_feats.shape={paint_feats.shape}")
         # 3. Keep idxs within [0..W-1] and [0..H-1]
         # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
         # ys = np.clip(ys, 0, im_arr.shape[0] - 1)
@@ -493,6 +543,7 @@ class NuScenesDataset(BaseDataset):
             # t1 = time.time()
             # print(f"[TIME] Loading sample {info['token']} from NuScenes: {t1 - t0:.4f}s")
             pc_full, time_lags_full = self.read_sweep_from_info(info)
+            radar_points, radar_times = self.read_radar_from_info(info)
             fused_list = []
             for cam in all_cam_names:
                 # t_get_fused_pc_start = time.time()
@@ -500,7 +551,7 @@ class NuScenesDataset(BaseDataset):
                     nusc= self.nusc, sample= sample, info= info,
                     cam_name= cam, pc_full= pc_full, time_lags_full= time_lags_full,
                     min_dist= 1.0, nsweeps= self.nsweeps,
-                    fuse_camera= self.fuse_camera
+                    fuse_camera= self.fuse_camera, rpc_full=radar_points, radar_time_lags_full=radar_times
                 )
                 fused_list.append(fused_pts)
                 # t_get_fused_pc_end = time.time()
@@ -523,7 +574,7 @@ class NuScenesDataset(BaseDataset):
             fused_pts = fused_pts[unique_indices]
             # t3 = time.time()
             # print(f"[TIME] Camera fusion + dedup: {t3 - t2:.4f}s")
-            radar_points, radar_times = self.read_radar_from_info(info)
+            
             R_xyz = radar_points[:, :3]
             R_rcs = radar_points[:, 3:4]
             R_intensity = np.zeros((R_xyz.shape[0], 1), dtype=np.float32)
@@ -566,7 +617,7 @@ class NuScenesDataset(BaseDataset):
             else:
                 res["points"] = fused_pts.astype(np.float32)
 
-            print(f"[DEBUG] points.shape={res['points'].shape}")
+            # print(f"[DEBUG] points.shape={res['points'].shape}")
             return res
 
     def evaluation(self, detections, output_dir=None, testset=False):

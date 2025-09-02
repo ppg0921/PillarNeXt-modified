@@ -10,3 +10,4 @@ outputs/
 **/*.o
 **/*.pth
 project_visualization/
+visualize_pointcloud/

@@ -64,6 +64,86 @@ def draw_legend(img_bgr, classes=NUIM_CLASSES, swatch=18, gap=6, margin=10):
         y += swatch + gap
     return out
 
+def inst_edges_from_id(inst_id):
+    H, W = inst_id.shape
+    e = np.zeros((H, W), dtype=np.uint8)
+    
+    #right and down neighbor
+    e[:, :-1] |= (inst_id[:, 1:] != inst_id[:, :-1]).astype(np.uint8)
+    e[:-1, :] |= (inst_id[1:, :] != inst_id[:-1, :]).astype(np.uint8)
+    bg = (inst_id == 0).astype(np.uint8)
+    return e
+
+def color_for_instance(inst_id_number):
+    """
+    Deterministic pseudo-random BGR color for an instance id (>=1).
+    """
+    # Map id -> hue in HSV, then convert to BGR
+    hue = (inst_id_number * 37) % 180  # 0..179
+    hsv = np.uint8([[[hue, 200, 255]]])  # S,V fixed
+    bgr = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[0,0]
+    return tuple(int(c) for c in bgr.tolist())
+
+def draw_instance_edges(img_bgr, inst_id, thickness=1, per_instance_colors=False):
+
+    out = img_bgr.copy()
+    if inst_id is None:
+        return out
+
+    if not per_instance_colors:
+        edges = inst_edges_from_id(inst_id)  # {0,1}
+        if thickness > 1:
+            kernel = np.ones((thickness, thickness), np.uint8)
+            edges = cv2.dilate(edges*255, kernel, iterations=1)
+        else:
+            edges = edges * 255
+        # White edges for visibility
+        out[edges > 0] = (255, 255, 255)
+        return out
+
+    # Per-instance colored contours (skip background=0)
+    ids = np.unique(inst_id)
+    ids = ids[ids != 0]
+    for iid in ids:
+        mask = (inst_id == iid).astype(np.uint8) * 255
+        # Find contours on a slightly eroded mask to avoid noisy borders
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        col = color_for_instance(int(iid))
+        for cnt in contours:
+            if cnt.shape[0] < 5:
+                continue
+            cv2.drawContours(out, [cnt], -1, col, thickness)
+    return out
+
+def label_instance_ids(img_bgr, inst_id, top_n=10, min_area=50):
+    """
+    Put instance id numbers near centroids for the largest instances.
+    """
+    if top_n <= 0 or inst_id is None:
+        return img_bgr
+    out = img_bgr.copy()
+    ids, counts = np.unique(inst_id, return_counts=True)
+    # Remove background
+    keep = ids != 0
+    ids, counts = ids[keep], counts[keep]
+    if len(ids) == 0:
+        return out
+    # Sort by area desc and take top_n
+    order = np.argsort(-counts)
+    ids = ids[order][:top_n]
+    for iid in ids:
+        if (inst_id == iid).sum() < min_area:
+            continue
+        ys, xs = np.nonzero(inst_id == iid)
+        if len(xs) == 0:
+            continue
+        cx, cy = int(xs.mean()), int(ys.mean())
+        cv2.putText(out, f'{int(iid)}', (cx, cy),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 3, cv2.LINE_AA)
+        cv2.putText(out, f'{int(iid)}', (cx, cy),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1, cv2.LINE_AA)
+    return out
+
 def main():
     parser = argparse.ArgumentParser(description='Randomly visualize painted nuScenes frames (no mmcv)')
     parser.add_argument('--nusc_root', required=True)
@@ -77,6 +157,10 @@ def main():
     parser.add_argument('--alpha', type=float, default=0.5)
     parser.add_argument('--conf_thresh', type=float, default=0.3)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--show_instances', action='store_true', help='Overlay instance boundaries if inst_id is present')
+    parser.add_argument('--per_instance_colors', action='store_true', help='Color edges by instance id (slower)')
+    parser.add_argument('--inst_edge_thickness', type=int, default=1, help='Edge thickness in pixels')
+    parser.add_argument('--label_instances_top', type=int, default=0, help='Label top-N largest instances with their id (0=off)')
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -94,6 +178,7 @@ def main():
     for token, img_path, npz_path in pick:
         data = np.load(npz_path)
         S = data['scores'].astype(np.float32)
+        inst_id = data['inst_id'].astype(np.int32) if 'inst_id' in data else None
         img = cv2.imread(img_path)  # BGR
 
         H_img, W_img = img.shape[:2]
@@ -106,7 +191,17 @@ def main():
             ], axis=-1)
             S = S_resized
 
+        if inst_id is not None and inst_id.shape[:2] != (H_img, W_img):
+            inst_id = cv2.resize(inst_id, (W_img, H_img), interpolation=cv2.INTER_NEAREST)
+
         blend = overlay_paint(img, S, alpha=args.alpha, conf_thresh=args.conf_thresh)
+        if args.show_instances and inst_id is not None:
+            blend = draw_instance_edges(blend, inst_id,
+                        thickness=args.inst_edge_thickness,
+                        per_instance_colors=args.per_instance_colors)
+            if args.label_instance_top > 0:
+                blend = label_instance_ids(blend, inst_id, top_n=args.label_instances_top)
+        
         blend = draw_legend(blend, classes=NUIM_CLASSES)
 
         out_file = os.path.join(args.out_dir, f'vis_{token}.jpg')

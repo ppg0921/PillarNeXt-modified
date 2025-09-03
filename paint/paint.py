@@ -73,7 +73,7 @@ def build_model(cfg_path, ckpt, device='cuda:0'):
     return model
 
 @torch.no_grad()
-def gpu_instances_to_semantic(result, H, W, K, score_thresh=0.5, device='cuda'):
+def gpu_instances_to_semantic(result, H, W, K, score_thresh=0.5, mask_thresh=0.5, device='cuda'):
     """
     GPU pipeline:
       - labels/scores/masks from result.pred_instances
@@ -82,9 +82,12 @@ def gpu_instances_to_semantic(result, H, W, K, score_thresh=0.5, device='cuda'):
     Returns: (H, W, K) float32 on CPU
     """
     S = torch.zeros((K, H, W), device=device, dtype=torch.float32)
+    
+    inst_id = torch.zeros((H, W), dtype=torch.int32, device=device)  # per pixel instance id map
 
     if not hasattr(result, 'pred_instances'):
-        return S.permute(1,2,0).cpu()
+        print("[WARNING] No pred_instances found")
+        return S.permute(1,2,0).cpu(), inst_id.cpu()
 
     inst = result.pred_instances
     labels = inst.get('labels', None)
@@ -92,7 +95,7 @@ def gpu_instances_to_semantic(result, H, W, K, score_thresh=0.5, device='cuda'):
     masks  = inst.get('masks', None)
 
     if labels is None or scores is None or masks is None or len(labels) == 0:
-        return S.permute(1,2,0).cpu()
+        return S.permute(1,2,0).cpu(), inst_id.cpu()
 
     labels = labels.to(device)
     scores = scores.to(device)
@@ -113,15 +116,16 @@ def gpu_instances_to_semantic(result, H, W, K, score_thresh=0.5, device='cuda'):
                 masks_t = masks_t[:, 0]
 
     if masks_t.numel() == 0:
-        return S.permute(1,2,0).cpu()
+        return S.permute(1,2,0).cpu(), inst_id.cpu()
 
     keep = scores >= score_thresh
     if keep.sum() == 0:
-        return S.permute(1,2,0).cpu()
+        return S.permute(1,2,0).cpu(), inst_id.cpu()
 
     labels = labels[keep]
     scores = scores[keep]
     masks_t = masks_t[keep]  # (Nf, h, w)
+    Nf = masks_t.shape[0]   # number of instances
 
     # Upsample to (H, W) in one go
     masks_up = F.interpolate(
@@ -135,7 +139,21 @@ def gpu_instances_to_semantic(result, H, W, K, score_thresh=0.5, device='cuda'):
             sc = scores[idx].view(-1, 1, 1)
             S[c] = torch.max(masks_up[idx] * sc, dim=0).values
 
-    return S.permute(1,2,0).cpu()
+    
+    # instance id map
+    if mask_thresh is not None:
+        masks_bin = (masks_up >= mask_thresh).float()
+    else:
+        masks_bin = (masks_up > 0).float()
+    
+    w = scores.view(Nf, 1, 1).to(masks_bin.dtype)
+    inst_weighted = masks_bin * w
+
+    max_vals, max_idx = torch.max(inst_weighted, dim=0)
+    inst_id = torch.where(max_vals > 0, max_idx+1, torch.tensor(0, device=device))
+    inst_id = inst_id.to(torch.int32)
+
+    return S.permute(1,2,0).cpu(), inst_id.cpu()
 
 def atomic_save_npz(path, **arrays):
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -186,6 +204,7 @@ def main():
     parser.add_argument('--out_dir', required=True, help='Output dir for .npz paint files')
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--score_thresh', type=float, default=0.5)
+    parser.add_argument('--mask_thresh', type=float, default=0.5)
     parser.add_argument('--dtype', default='fp16', choices=['fp16','fp32'])
     parser.add_argument('--cams', nargs='+',
                         default=['CAM_FRONT','CAM_FRONT_LEFT','CAM_FRONT_RIGHT','CAM_BACK','CAM_BACK_LEFT','CAM_BACK_RIGHT'])
@@ -267,12 +286,14 @@ def main():
                 continue
 
             try:
-                S = gpu_instances_to_semantic(
-                    res, H, W, K=K, score_thresh=args.score_thresh, device=device if 'cuda' in device else 'cpu'
-                ).numpy()
+                S, inst_id = gpu_instances_to_semantic(
+                    res, H, W, K=K, score_thresh=args.score_thresh, mask_thresh=args.mask_thresh, device=device if 'cuda' in device else 'cpu'
+                )
+                S = S.numpy()
+                inst_id = inst_id.numpy()
                 if use_fp16:
                     S = S.astype(np.float16)
-                atomic_save_npz(out_path, scores=S, height=H, width=W, class_names=np.array(NUIM_CLASSES))
+                atomic_save_npz(out_path, scores=S, inst_id=inst_id, height=H, width=W, class_names=np.array(NUIM_CLASSES))
             except Exception as e:
                 # Log and continue; you can also write a .err file next to the image if you want
                 print(f"[WARN] Failed on token {cam_token}: {e}")

@@ -11,7 +11,7 @@ from os import path
 import time
 from functools import lru_cache
 import cv2
-
+from det3d.datasets.nuscenes.clustering import filter_paint_feats_by_dbscan_per_instance
 
 @lru_cache(maxsize=4096)
 def _load_paint_npz(npz_path):
@@ -290,12 +290,6 @@ class NuScenesDataset(BaseDataset):
             im = pil.open(path.join(nusc.dataroot, cam_sd['filename']))
             W_img, H_img = im.size
 
-        # t2 = time.time()
-        # im = pil.open(path.join(nusc.dataroot, cam_sd['filename']))
-
-        # Nuscenes pointcloud point dimensions start with x, y, and z coordinates.
-        # depths = pc_cam.points[2, :]
-
         p_points, mask = project_points(pc_cam.points[:3, :],
                                         np.array(cs_record['camera_intrinsic']),
                                         (W_img, H_img), min_dist)
@@ -315,6 +309,7 @@ class NuScenesDataset(BaseDataset):
             # Get colors of the projected points from the RGB image
         npz_path = os.path.join(self.painted_path, f"{camera_token}.npz")
         paint_feats = None
+        inst_ids = None
         
         try:
             data = _load_paint_npz(npz_path) if '_load_paint_npz' in globals() else np.load(npz_path)
@@ -323,22 +318,28 @@ class NuScenesDataset(BaseDataset):
             if hasattr(self, 'paint_K') and K != self.paint_K:
                 print(f"[WARNING] Inconsistent paint_K: {K} vs {self.paint_K}") 
                 pass
+            inst_map = data['inst_id'] if 'inst_id' in data else None
             if (H_s != H_img) or (W_s != W_img):
                 S = np.stack([
                     cv2.resize(S[..., c].astype(np.float32), (W_img, H_img), interpolation=cv2.INTER_LINEAR)
                     for c in range(S.shape[-1])
                 ], axis=-1)
-                
+                if inst_map is not None:
+                    inst_map = cv2.resize(inst_map.astype(np.int32), (W_img, H_img), interpolation=cv2.INTER_NEAREST)
+
             xs = p_points[0].astype(np.int32)   # floor all values
             ys = p_points[1].astype(np.int32)
             paint_feats = S[ys, xs, :].astype(np.float32, copy=False)
+            inst_ids = inst_map[ys, xs].astype(np.int32, copy=False)
         # im_arr = np.asarray(im)  # shape (H, W, C)
 
         except FileNotFoundError:
             # Missing .npz: fall back to zeros so pipeline can continue
             print(f"[WARN] paint file missing for {camera_token}: {npz_path}")
             K = getattr(self, 'paint_K', 10)
+            Nf = pc_lidar.shape[0]
             paint_feats = np.zeros((pc_lidar.shape[0], K), dtype=np.float32)
+            inst_ids = np.zeros((Nf,), dtype=np.int32)
 
         # 3. Keep idxs within [0..W-1] and [0..H-1]
         # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
@@ -350,9 +351,27 @@ class NuScenesDataset(BaseDataset):
         # pc.translate(np.array(cs_record['translation']))
 
         # fused_pc = np.vstack([pc.points, time_lags, colors]).T
-        fused_pc = np.hstack([pc_lidar, time_lags_cam, paint_feats]).astype(np.float32)
-        # print(f"[FUSION DEBUG] fused_pc shape: {fused_pc.shape}\n")
+        
+        
+        uniq_iids, inv = np.unique(inst_ids, return_inverse=True)   # sorted array of unique instance ids
+        # inv: integer array of length N where each entry tells you which unique id bucket that point belongs to
+        inst_to_indices = {}
+        for u_i, iid in enumerate(uniq_iids):
+            idxs = np.nonzero(inv == u_i)[0]
+            inst_to_indices[int(iid)] = idxs    # build lists of grouped indices
+            
+        inst_cluster_results = {}
+        for iid, idxs in inst_to_indices.items():
+            if idxs.size == 0:
+                continue
+            if iid == 0:
+                continue    # ignore background
+            
+            _ = filter_paint_feats_by_dbscan_per_instance(pc_lidar=pc_lidar, inst_ids=inst_ids, paint_feats=paint_feats,
+                                                          inst_to_indices=inst_to_indices, eps=0.4, min_samples=5)
 
+        # print(f"[FUSION DEBUG] fused_pc shape: {fused_pc.shape}\n")
+        fused_pc = np.hstack([pc_lidar, time_lags_cam, paint_feats]).astype(np.float32, copy=False)
         return fused_pc
 
     def load_pointcloud(self, res, info):

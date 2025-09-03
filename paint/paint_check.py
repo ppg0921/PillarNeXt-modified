@@ -199,7 +199,7 @@ def main():
             blend = draw_instance_edges(blend, inst_id,
                         thickness=args.inst_edge_thickness,
                         per_instance_colors=args.per_instance_colors)
-            if args.label_instance_top > 0:
+            if args.label_instances_top > 0:
                 blend = label_instance_ids(blend, inst_id, top_n=args.label_instances_top)
         
         blend = draw_legend(blend, classes=NUIM_CLASSES)

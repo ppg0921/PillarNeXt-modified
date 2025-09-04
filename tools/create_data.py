@@ -28,5 +28,7 @@ def nuscenes_data_prep(root_path, painted_path, version="v1.0-trainval", nsweeps
 
 
 if __name__ == '__main__':
+    print("before mp")
     mp.set_start_method("spawn", force=True)
+    print("after mp")
     fire.Fire()

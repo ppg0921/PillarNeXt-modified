@@ -2,6 +2,7 @@ import numpy as np
 from cuml.cluster import DBSCAN as cuDBSCAN
 from sklearn.cluster import DBSCAN
 import cupy as cp
+import cudf
 
 def filter_paint_feats_by_dbscan_per_instance(
     pc_lidar: np.ndarray,
@@ -70,12 +71,19 @@ def filter_paint_feats_by_dbscan_per_instance(
     inst_feat = (inst_sel.astype(np.float32)*alpha).reshape(-1, 1)  # (Np, 1)
     coords_feat = np.concatenate((coords, inst_feat), axis=1) .astype(np.float32, order='C')
     
-    feats_dev = cp.asarray(coords_feat, dtype=cp.float32)
-    if not feats_dev.flags.c_contiguous:
-        feats_dev = cp.ascontiguousarray(feats_dev)
+    # feats_dev = cp.asarray(coords_feat, dtype=cp.float32)
+    # if not feats_dev.flags.c_contiguous:
+    #     feats_dev = cp.ascontiguousarray(feats_dev)
     
-    labels_dev = cuDBSCAN(eps=eps, min_samples=min_samples, metric=metric).fit_predict(feats_dev)
-    labels_np = cp.asnumpy(labels_dev).astype(np.int32, copy=False)   # (Np,)
+    # labels_dev = cuDBSCAN(eps=eps, min_samples=min_samples, metric=metric).fit_predict(feats_dev)
+    # labels_np = cp.asnumpy(labels_dev).astype(np.int32, copy=False)   # (Np,)
+    
+    colnames = (["x", "y", "inst"] if coords.shape[1] == 2 else ["x", "y", "z", "inst"])
+    df_gpu = cudf.DataFrame(coords_feat, columns=colnames)
+
+    # One cuML DBSCAN call on the whole set
+    labels_cudf = cuDBSCAN(eps=eps, min_samples=min_samples).fit_predict(df_gpu)
+    labels_np = labels_cudf.to_numpy().astype(np.int32, copy=False)    # (Np,)
     
     proc_idx_global = np.nonzero(proc_mask)[0]      # indices of the chosen points in the full set
     uniq_iids, inv = np.unique(inst_sel, return_inverse=True)

@@ -111,7 +111,7 @@ def make_class_colored_html(points,
     
 if __name__ == '__main__':
     npz_directory = "/home/betty/CMU-intern/pillarnext/visualize_pointcloud/clustered"
-    filename = "0cd661df01aa40c3bb3a773ba86f753a_fused_pts"
+    filename = "0fa505e5dd804d3b9f9f076d23b28d6d_fused_pts"
     out_html = os.path.join(npz_directory, f"{filename}.html")
     filepath = os.path.join(npz_directory, f"{filename}.npz")
     data = np.load(filepath)

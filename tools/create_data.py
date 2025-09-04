@@ -2,6 +2,7 @@ import fire
 from det3d.datasets.nuscenes.nusc_common import create_nuscenes_infos 
 # from det3d.datasets.waymo.waymo_convert import create_waymo_infos
 from create_gt_database import create_groundtruth_database
+import torch.multiprocessing as mp
 
 
 def nuscenes_data_prep(root_path, painted_path, version="v1.0-trainval", nsweeps=10, fuse_camera=False, cam_name="CAM_FRONT", padding=True):
@@ -26,4 +27,5 @@ def nuscenes_data_prep(root_path, painted_path, version="v1.0-trainval", nsweeps
 
 
 if __name__ == '__main__':
+    mp.set_start_method("spawn", force=True)
     fire.Fire()

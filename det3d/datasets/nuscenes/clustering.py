@@ -1,5 +1,7 @@
 import numpy as np
 from cuml.cluster import DBSCAN as cuDBSCAN
+from sklearn.cluster import DBSCAN
+import cupy as cp
 # import cupy as cp
 
 def _to_numpy_labels(labels):
@@ -71,135 +73,91 @@ def filter_paint_feats_by_dbscan_per_instance(
         Per-point cluster label within its instance. -1 for noise or unprocessed.
         Labels are NOT global across instances; they restart at 0 per instance.
     """
-    # Try to import scikit-learn here (local import to avoid global dependency)
-    try:
-        from sklearn.cluster import DBSCAN
-    except Exception as e:
-        raise RuntimeError(
-            "scikit-learn is required for DBSCAN. Please install it, e.g.:\n"
-            "  pip install scikit-learn\n\n"
-            f"Import error: {e}"
-        )
 
     Nf = pc_lidar.shape[0]    # number of lidar point clouds
     cluster_labels_out = np.full((Nf,), -1, dtype=np.int32)
+    proc_mask = (inst_ids > 0)
 
-    for iid, idxs in inst_to_indices.items():
-        if idxs.size == 0:
+    if not proc_mask.any():
+        return cluster_labels_out
+    
+    if cluster_dims == "xy":
+        coords = pc_lidar[proc_mask, :2].astype(np.float32, copy=False)
+    else:
+        coords = pc_lidar[proc_mask, :3].astype(np.float32, copy=False)
+    
+    inst_sel = inst_ids[proc_mask].astype(np.int32, copy=False)     # selected instance ids
+    
+    alpha = 10*eps
+    inst_feat = (inst_sel.astype(np.float32)*alpha).reshape(-1, 1)  # (Np, 1)
+    coords_feat = np.concatenate((coords, inst_feat), axis=1) .astype(np.float32, order='C')
+    
+    feats_dev = cp.asarray(coords_feat, dtype=cp.float32)
+    if not feats_dev.flags.c_contiguous:
+        feats_dev = cp.ascontiguousarray(feats_dev)
+    
+    labels_dev = cuDBSCAN(eps=eps, min_samples=min_samples, metric=metric).fit_predict(feats_dev)
+    labels_np = cp.asnumpy(labels_dev).astype(np.int32, copy=False)   # (Np,)
+    
+    proc_idx_global = np.nonzero(proc_mask)[0]      # indices of the chosen points in the full set
+    uniq_iids, inv = np.unique(inst_sel, return_inverse=True)
+    inst_to_local = {iid: np.nonzero(inv == i)[0] for i, iid in enumerate(uniq_iids)}       # construct lists of local indices per instance id
+    
+    dists_proc = np.linalg.norm(coords, axis=1)
+    
+
+    for iid, loc in inst_to_local.items():      # each instance's index list
+        if loc.size == 0:
             continue
-        if iid == 0 and not include_background:
-            # skip background unless requested
+
+        lbls = labels_np[loc]
+        
+        cand = np.unique(lbls)
+        cand = cand[cand != -1] if not treat_noise_as_cluster else cand
+        
+        if cand.size == 0:
+            # all noise
             continue
         
-        if cluster_dims == "xy":
-            pts_xyz = pc_lidar[idxs, :2]
-        else:
-            pts_xyz = pc_lidar[idxs, :3]
-        if pts_xyz.shape[0] < max(1, min_samples):
-            continue
-            # Too few points: keep the single closest point's "cluster" (degenerate),
-            # zero out paint_feats for the rest.
-            dists = np.linalg.norm(pts_xyz, axis=1)
-            keep_idx_local = int(np.argmin(dists))
-            # mark the kept one as cluster 0, rest stay -1
-            cluster_labels_out[idxs[keep_idx_local]] = 0
-            # zero others
-            if pts_xyz.shape[0] > 1:
-                zero_idxs = np.delete(idxs, keep_idx_local)
-                paint_feats[zero_idxs, :] = 0.0
-            continue
-
-        # DBSCAN
-        # db = DBSCAN(eps=eps, min_samples=min_samples, metric=metric)
-        # labels = cuDBSCAN(eps=eps, min_samples=min_samples).fit_predict(pts_xyz.astype(np.float32)).get()
-        try:
-            # Prefer giving cuML a CuPy array for speed (if CuPy is present)
-            try:
-                import cupy as cp
-                pts_dev = cp.asarray(pts_xyz, dtype=cp.float32)
-                use_cupy = True
-            except Exception:
-                pts_dev = pts_xyz.astype(np.float32, copy=False)
-                use_cupy = False
-
-            from cuml.cluster import DBSCAN as cuDBSCAN
-            # print("using cuDBSCAN")
-            labels = cuDBSCAN(eps=eps, min_samples=min_samples).fit_predict(pts_dev)
-            labels = _to_numpy_labels(labels).astype(np.int32, copy=False)
-            # return labels
-        except Exception:
-            # Fallback: sklearn (CPU)
-            from sklearn.cluster import DBSCAN
-            labels = DBSCAN(eps=eps, min_samples=min_samples, metric="euclidean").fit_predict(
-                pts_xyz.astype(np.float32, copy=False)
-            )
-            print("using cpu for clustering")
-            # return labels.astype(np.int32, copy=False)
-        # Record raw labels (per instance)
-        cluster_labels_out[idxs] = labels
-
-        # Determine which cluster to keep
-        unique_labels = np.unique(labels)
-        # print("Unique labels:", unique_labels)
-        # Optionally drop noise from consideration
-        label_pool = unique_labels if treat_noise_as_cluster else unique_labels[unique_labels != -1]
-        if label_pool.size == 0:
-            # All noise: keep the single closest point to origin, zero the rest
-            # dists = np.linalg.norm(pts_xyz, axis=1)
-            # keep_idx_local = int(np.argmin(dists))
-            # # mark the kept one as cluster 0 (normalize label)
-            # cluster_labels_out[idxs] = -1  # reset
-            # cluster_labels_out[idxs[keep_idx_local]] = 0
-            # zero_idxs = np.delete(idxs, keep_idx_local)
-            # paint_feats[zero_idxs, :] = 0.0
-            continue
-
-        # For each candidate cluster, compute the minimum distance-to-origin among its points
-        # and keep the cluster with the smallest such minimum (closest to origin).
-        dists = np.linalg.norm(pts_xyz, axis=1)
         best_label = None
         if selection_mode == "largest":
             best_size = -1
-            best_min_dist = np.inf
-            for lbl in label_pool:
-                members = (labels == lbl)
+            best_min = np.inf
+            for c in cand:
+                members = (lbls == c)
                 if not np.any(members):
                     continue
                 cluster_size = np.sum(members)
-                min_dist = float(dists[members].min())
-                if cluster_size > best_size or (cluster_size == best_size and min_dist < best_min_dist):
+                min_dist = float(dists_proc[loc][members].min())
+                if cluster_size > best_size or (cluster_size == best_size and min_dist < best_min):
                     best_size = cluster_size
-                    best_min_dist = min_dist
-                    best_label = lbl
+                    best_min = min_dist
+                    best_label = int(c)
+
         else: # "closest" (default)
             best_min_dist = np.inf
-            for lbl in label_pool:
-                members = (labels == lbl)
+            for c in cand:
+                members = (lbls == c)
                 if not np.any(members):
                     continue
-                min_dist = dists[members].min()
+                min_dist = float(dists_proc[loc][members].min())
                 if min_dist < best_min_dist:
                     best_min_dist = min_dist
-                    best_label = lbl
+                    best_label = int(c)
 
-        # Keep best_label cluster; zero out others (and noise if not treated as a cluster)
-        if best_label is None:
-            # Should not happen (guard), but be safe
-            zero_idxs = idxs
-        else:
-            keep_mask = (labels == best_label)
-            zero_mask = ~keep_mask
-            if not treat_noise_as_cluster:
-                zero_mask |= (labels == -1)
-            zero_idxs = idxs[zero_mask]
-
-            # Normalize labels inside this instance (optional):
-            # Set the kept cluster label to 0, others remain as-is or -1
-            cluster_labels_out[idxs[keep_mask]] = 0
-
-        # Zero out paint for all points not in the kept cluster
-        if zero_idxs.size > 0:
+        keep_mask = (lbls == best_label)
+        zero_mask = ~keep_mask
+        zero_mask |= (lbls == -1)
+        
+        global_idxs = proc_idx_global[loc]
+        zero_idxs = global_idxs[zero_mask]
+        
+        if zero_idxs.size:
             paint_feats[zero_idxs, :] = 0.0
-        # print(f"length of zero_idxs: {zero_idxs.size}")
-
+        
+        lbls_norm = np.where(keep_mask, 0, lbls)
+        labels_np[loc] = lbls_norm
+    
+    cluster_labels_out[proc_idx_global] = labels_np
     return cluster_labels_out
+

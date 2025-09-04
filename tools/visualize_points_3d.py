@@ -1,13 +1,13 @@
 # pip install open3d
 import os
 import numpy as np
-os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"  # force Mesa software rasterizer
+os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"  
 import open3d as o3d
 import plotly.graph_objects as go
 import plotly.io as pio
 import subprocess
 
-pio.renderers.default = "browser"   # or "vscode" if you use VS Code's Python plots
+pio.renderers.default = "browser"  
 
 CLASS_NAMES = [
     'car','truck','trailer','bus','construction_vehicle',
@@ -111,7 +111,7 @@ def make_class_colored_html(points,
     
 if __name__ == '__main__':
     npz_directory = "/home/betty/CMU-intern/pillarnext/visualize_pointcloud/clustered"
-    filename = "9ab95de13c2d432ebb678ebb5da1ac5e_fused_pts"
+    filename = "0cd661df01aa40c3bb3a773ba86f753a_fused_pts"
     out_html = os.path.join(npz_directory, f"{filename}.html")
     filepath = os.path.join(npz_directory, f"{filename}.npz")
     data = np.load(filepath)

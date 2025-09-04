@@ -5,6 +5,7 @@ import torch
 import hydra
 from hydra.utils import instantiate
 from omegaconf import DictConfig, OmegaConf
+import torch.multiprocessing as mp
 
 import logging
 import os
@@ -118,4 +119,5 @@ def main(cfg: DictConfig):
 
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
     main()

@@ -100,7 +100,7 @@ class NuScenesDataset(BaseDataset):
                              dtype=np.float32).reshape(-1, 5)[:, :num_point_feature]
         return points
 
-    def read_sweep(self, sweep, min_distance=1.0):
+    def read_sweep(self, sweep, min_distance=2.0):
         points_sweep = self.read_file(str(sweep["lidar_path"])).T
 
         nbr_points = points_sweep.shape[1]
@@ -123,6 +123,11 @@ class NuScenesDataset(BaseDataset):
         y_filt = np.abs(points[1, :]) < radius
         not_close = np.logical_not(np.logical_and(x_filt, y_filt))
         points = points[:, not_close]
+        x_bulk = np.abs(points[0, :]) < 1.0
+        y_bulk = np.abs(points[1, :]) < 6.0
+        z_bulk = np.logical_and((points[2, :]) < 0.0, (points[2, :]) > -1.0)
+        not_bulk = np.logical_not(np.logical_and(np.logical_and(x_bulk, y_bulk), z_bulk))
+        points = points[:, not_bulk]
         return points
 
     @staticmethod
@@ -368,7 +373,8 @@ class NuScenesDataset(BaseDataset):
                 continue    # ignore background
             
             _ = filter_paint_feats_by_dbscan_per_instance(pc_lidar=pc_lidar, inst_ids=inst_ids, paint_feats=paint_feats,
-                                                          inst_to_indices=inst_to_indices, eps=0.4, min_samples=5)
+                                                          inst_to_indices=inst_to_indices, eps=0.3, min_samples=5, 
+                                                          selection_mode="largest", cluster_dims="xy")
 
         # print(f"[FUSION DEBUG] fused_pc shape: {fused_pc.shape}\n")
         fused_pc = np.hstack([pc_lidar, time_lags_cam, paint_feats]).astype(np.float32, copy=False)
@@ -457,6 +463,11 @@ class NuScenesDataset(BaseDataset):
                 # t5 = time.time()
                 # print(f"[TIME] Padding process: {t5 - t4:.4f}s")
             else:
+                save_dir = f"/home/betty/CMU-intern/pillarnext/visualize_pointcloud/clustered"
+                os.makedirs(save_dir, exist_ok=True)
+                filename = os.path.join(save_dir, f"{info['token']}_fused_pts.npz")
+                np.savez_compressed(filename, fused_pts.astype(np.float32))
+                print(f"Saved {info['token']}_fused_pts.npz with shape {fused_pts.shape}")
                 res["points"] = fused_pts.astype(np.float32)
 
             # print(f"[DEBUG] points.shape={res['points'].shape}")

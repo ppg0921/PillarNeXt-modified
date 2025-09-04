@@ -33,6 +33,8 @@ def filter_paint_feats_by_dbscan_per_instance(
     metric: str = "euclidean",
     include_background: bool = False,
     treat_noise_as_cluster: bool = False,
+    selection_mode: str = "closest",
+    cluster_dims: str = "xyz"
 ):
     """
     For each instance id, run DBSCAN on the instance's LiDAR xyz, keep ONLY the cluster
@@ -60,7 +62,9 @@ def filter_paint_feats_by_dbscan_per_instance(
     treat_noise_as_cluster : bool
         If True, consider DBSCAN noise label (-1) as its own "cluster" when
         selecting the nearest cluster; if False, all noise points are zeroed.
-
+    selection_mode : str
+        "closest": select the cluster whose closest point to origin is nearest.
+        "largest": select the largest cluster; if tie, select the one whose closest
     Returns
     -------
     cluster_labels_out : np.ndarray, shape (Nf,), dtype=int32
@@ -86,8 +90,11 @@ def filter_paint_feats_by_dbscan_per_instance(
         if iid == 0 and not include_background:
             # skip background unless requested
             continue
-
-        pts_xyz = pc_lidar[idxs, :3]
+        
+        if cluster_dims == "xy":
+            pts_xyz = pc_lidar[idxs, :2]
+        else:
+            pts_xyz = pc_lidar[idxs, :3]
         if pts_xyz.shape[0] < max(1, min_samples):
             continue
             # Too few points: keep the single closest point's "cluster" (degenerate),
@@ -116,47 +123,64 @@ def filter_paint_feats_by_dbscan_per_instance(
                 use_cupy = False
 
             from cuml.cluster import DBSCAN as cuDBSCAN
+            # print("using cuDBSCAN")
             labels = cuDBSCAN(eps=eps, min_samples=min_samples).fit_predict(pts_dev)
             labels = _to_numpy_labels(labels).astype(np.int32, copy=False)
-            return labels
+            # return labels
         except Exception:
             # Fallback: sklearn (CPU)
             from sklearn.cluster import DBSCAN
             labels = DBSCAN(eps=eps, min_samples=min_samples, metric="euclidean").fit_predict(
                 pts_xyz.astype(np.float32, copy=False)
             )
-            return labels.astype(np.int32, copy=False)
+            print("using cpu for clustering")
+            # return labels.astype(np.int32, copy=False)
         # Record raw labels (per instance)
         cluster_labels_out[idxs] = labels
 
         # Determine which cluster to keep
         unique_labels = np.unique(labels)
+        # print("Unique labels:", unique_labels)
         # Optionally drop noise from consideration
         label_pool = unique_labels if treat_noise_as_cluster else unique_labels[unique_labels != -1]
         if label_pool.size == 0:
             # All noise: keep the single closest point to origin, zero the rest
-            dists = np.linalg.norm(pts_xyz, axis=1)
-            keep_idx_local = int(np.argmin(dists))
-            # mark the kept one as cluster 0 (normalize label)
-            cluster_labels_out[idxs] = -1  # reset
-            cluster_labels_out[idxs[keep_idx_local]] = 0
-            zero_idxs = np.delete(idxs, keep_idx_local)
-            paint_feats[zero_idxs, :] = 0.0
+            # dists = np.linalg.norm(pts_xyz, axis=1)
+            # keep_idx_local = int(np.argmin(dists))
+            # # mark the kept one as cluster 0 (normalize label)
+            # cluster_labels_out[idxs] = -1  # reset
+            # cluster_labels_out[idxs[keep_idx_local]] = 0
+            # zero_idxs = np.delete(idxs, keep_idx_local)
+            # paint_feats[zero_idxs, :] = 0.0
             continue
 
         # For each candidate cluster, compute the minimum distance-to-origin among its points
         # and keep the cluster with the smallest such minimum (closest to origin).
         dists = np.linalg.norm(pts_xyz, axis=1)
         best_label = None
-        best_min_dist = np.inf
-        for lbl in label_pool:
-            members = (labels == lbl)
-            if not np.any(members):
-                continue
-            min_dist = dists[members].min()
-            if min_dist < best_min_dist:
-                best_min_dist = min_dist
-                best_label = lbl
+        if selection_mode == "largest":
+            best_size = -1
+            best_min_dist = np.inf
+            for lbl in label_pool:
+                members = (labels == lbl)
+                if not np.any(members):
+                    continue
+                cluster_size = np.sum(members)
+                min_dist = float(dists[members].min())
+                if cluster_size > best_size or (cluster_size == best_size and min_dist < best_min_dist):
+                    best_size = cluster_size
+                    best_min_dist = min_dist
+                    best_label = lbl
+        else: # "closest" (default)
+            best_min_dist = np.inf
+            for lbl in label_pool:
+                members = (labels == lbl)
+                if not np.any(members):
+                    continue
+                min_dist = dists[members].min()
+                if min_dist < best_min_dist:
+                    best_min_dist = min_dist
+                    best_label = lbl
 
         # Keep best_label cluster; zero out others (and noise if not treated as a cluster)
         if best_label is None:
@@ -176,5 +200,6 @@ def filter_paint_feats_by_dbscan_per_instance(
         # Zero out paint for all points not in the kept cluster
         if zero_idxs.size > 0:
             paint_feats[zero_idxs, :] = 0.0
+        # print(f"length of zero_idxs: {zero_idxs.size}")
 
     return cluster_labels_out

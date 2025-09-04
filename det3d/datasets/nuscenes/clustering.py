@@ -2,28 +2,6 @@ import numpy as np
 from cuml.cluster import DBSCAN as cuDBSCAN
 from sklearn.cluster import DBSCAN
 import cupy as cp
-# import cupy as cp
-
-def _to_numpy_labels(labels):
-    """Convert cuML outputs (CuPy/cudf) or sklearn outputs to a NumPy ndarray."""
-    # CuPy ndarray -> NumPy
-    try:
-        import cupy as cp
-        if isinstance(labels, cp.ndarray):
-            return cp.asnumpy(labels)
-    except Exception:
-        pass
-
-    # cuDF Series/DataFrame -> NumPy
-    try:
-        import cudf
-        if isinstance(labels, (cudf.Series, cudf.DataFrame)):
-            return labels.to_numpy()
-    except Exception:
-        pass
-
-    # Already NumPy-like
-    return np.asarray(labels)
 
 def filter_paint_feats_by_dbscan_per_instance(
     pc_lidar: np.ndarray,

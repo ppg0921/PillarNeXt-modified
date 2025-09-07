@@ -11,7 +11,7 @@ defaults:
 _tasks: [["car"], ["truck", "construction_vehicle"], ["bus", "trailer"], ["barrier"], ["motorcycle", "bicycle"], ["pedestrian", "traffic_cone"] ]
 model:
   reader:
-    num_input_features: 18
+    num_input_features: 17
     voxel_size: [0.075, 0.075, 8]
     pc_range: [-50.4, -50.4, -5.0, 50.4, 50.4, 3.0]
   backbone:
@@ -81,7 +81,7 @@ data:
       rate: 1.0
       gt_drop_percentage: 0
       gt_drop_max_keep_points: -1
-      point_dim: 18
+      point_dim: 17
     prepare_label:
       centermap:
         tasks: ${_tasks}

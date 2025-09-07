@@ -283,7 +283,7 @@ class NuScenesDataset(BaseDataset):
     
     
     def get_camera_fused_pointcloud(self, nusc: NuScenes, sample, info,
-                                cam_name='CAM_FRONT', pc_full=None, time_lags_full=None,
+                                cam_name='CAM_FRONT',
                                 min_dist=1.0,
                                 nsweeps=10,
                                 fuse_camera=True,
@@ -317,11 +317,11 @@ class NuScenesDataset(BaseDataset):
         """
 
         # t0 = time.time()
-        pc_cam, pc_lidar, time_lags_cam = self.load_and_transform_lidar_to_cam(nusc, sample, info, cam_name=cam_name, 
-                                                                       pc_full=pc_full, time_lags_full=time_lags_full,
-                                                                       nsweeps=nsweeps)
+        # pc_cam, pc_lidar, time_lags_cam = self.load_and_transform_lidar_to_cam(nusc, sample, info, cam_name=cam_name, 
+        #                                                                pc_full=pc_full, time_lags_full=time_lags_full,
+        #                                                                nsweeps=nsweeps)
 
-        # pc_cam_radar, pc_radar, time_lags_cam_radar = self.load_and_transform_lidar_to_cam(nusc, sample, info, cam_name=cam_name, pc_full=rpc_full, time_lags_full=radar_time_lags_full)
+        pc_cam_radar, pc_radar, time_lags_cam_radar = self.load_and_transform_lidar_to_cam(nusc, sample, info, cam_name=cam_name, pc_full=rpc_full, time_lags_full=radar_time_lags_full)
         # t1 = time.time()
         # print(f"[TIME][{cam_name}] load_and_transform_lidar_to_cam: {t1 - t0:.4f}s")
         # pc is already in the type of PointCloud
@@ -345,7 +345,7 @@ class NuScenesDataset(BaseDataset):
         # Nuscenes pointcloud point dimensions start with x, y, and z coordinates.
         # depths = pc_cam.points[2, :]
 
-        p_points, mask = project_points(pc_cam.points[:3, :],
+        p_points, mask = project_points(pc_cam_radar.points[:3, :],
                                         np.array(cs_record['camera_intrinsic']),
                                         (W_img, H_img), min_dist)
         
@@ -356,12 +356,12 @@ class NuScenesDataset(BaseDataset):
         # time_lags = time_lags[:, mask]
         # print(f"[FUSION DEBUG] shape of pc: {pc.points.shape}, shape of time_lags: {time_lags.shape}\n")
         
-        pc_lidar = pc_lidar[mask, :]
-        time_lags_cam = time_lags_cam[mask, :]
+        pc_radar = pc_radar[mask, :]
+        time_lags_cam_radar = time_lags_cam_radar[mask, :]
 
         # pc = PointCloud(pc.points)
         if not fuse_camera:
-            return np.hstack([pc_lidar, time_lags_cam])
+            return np.hstack([pc_radar, time_lags_cam_radar])
         # if fuse_camera:
             # Get colors of the projected points from the RGB image
         npz_path = os.path.join(self.painted_path, f"{camera_token}.npz")
@@ -389,7 +389,7 @@ class NuScenesDataset(BaseDataset):
             # Missing .npz: fall back to zeros so pipeline can continue
             print(f"[WARN] paint file missing for {camera_token}: {npz_path}")
             K = getattr(self, 'paint_K', 10)
-            paint_feats = np.zeros((pc_lidar.shape[0], K), dtype=np.float32)
+            paint_feats = np.zeros((pc_radar.shape[0], K), dtype=np.float32)
             
         # 3. Keep idxs within [0..W-1] and [0..H-1]
         # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
@@ -401,7 +401,7 @@ class NuScenesDataset(BaseDataset):
         # pc.translate(np.array(cs_record['translation']))
 
         # fused_pc = np.vstack([pc.points, time_lags, colors]).T
-        fused_pc = np.hstack([pc_lidar, time_lags_cam, paint_feats]).astype(np.float32)
+        fused_pc = np.hstack([pc_radar, time_lags_cam_radar, paint_feats]).astype(np.float32)
         # print(f"[FUSION DEBUG] fused_pc shape: {fused_pc.shape}\n")
 
         return fused_pc
@@ -429,14 +429,14 @@ class NuScenesDataset(BaseDataset):
             sample = self.nusc.get('sample', info['token'])
             # t1 = time.time()
             # print(f"[TIME] Loading sample {info['token']} from NuScenes: {t1 - t0:.4f}s")
-            pc_full, time_lags_full = self.read_sweep_from_info(info)
+            # pc_full, time_lags_full = self.read_sweep_from_info(info)
             radar_points, radar_times = self.read_radar_from_info(info)
             fused_list = []
             for cam in all_cam_names:
                 # t_get_fused_pc_start = time.time()
                 fused_pts = self.get_camera_fused_pointcloud(
                     nusc= self.nusc, sample= sample, info= info,
-                    cam_name= cam, pc_full= pc_full, time_lags_full= time_lags_full,
+                    cam_name= cam,
                     min_dist= 1.0, nsweeps= self.nsweeps,
                     fuse_camera= self.fuse_camera, rpc_full=radar_points, radar_time_lags_full=radar_times
                 )
@@ -462,16 +462,16 @@ class NuScenesDataset(BaseDataset):
             # t3 = time.time()
             # print(f"[TIME] Camera fusion + dedup: {t3 - t2:.4f}s")
             
-            R_xyz = radar_points[:, :3]
-            R_rcs = radar_points[:, 3:4]
-            R_vxy = radar_points[:, 4:6]
-            R_intensity = np.zeros((R_xyz.shape[0], 1), dtype=np.float32)
-            R_paint = np.zeros((R_xyz.shape[0], 10), dtype=np.float32)
-            radar_total_points = np.hstack([R_xyz, R_intensity, radar_times, R_paint, R_rcs, R_vxy])
-            L_rcs_vxy = np.zeros((fused_pts.shape[0], 3), dtype=np.float32)
-            fused_pts = np.hstack([fused_pts, L_rcs_vxy]).astype(np.float32)
+            # R_xyz = radar_points[:, :3]
+            # R_rcs = radar_points[:, 3:4]
+            # R_vxy = radar_points[:, 4:6]
+            # R_intensity = np.zeros((R_xyz.shape[0], 1), dtype=np.float32)
+            # R_paint = np.zeros((R_xyz.shape[0], 10), dtype=np.float32)
+            # radar_total_points = np.hstack([R_xyz, R_intensity, radar_times, R_paint, R_rcs, R_vxy])
+            # L_rcs_vxy = np.zeros((fused_pts.shape[0], 3), dtype=np.float32)
+            # fused_pts = np.hstack([fused_pts, L_rcs_vxy]).astype(np.float32)
 
-            fused_pts = np.concatenate([fused_pts, radar_total_points], axis=0)
+            # fused_pts = np.concatenate([fused_pts, radar_total_points], axis=0)
             # print(f"[DEBUG] fused_pts first 5 points: {fused_pts[:5]}")
             # print(f"[DEBUG] fused_pts last 5 points: {fused_pts[-5:]}")
 
@@ -479,8 +479,8 @@ class NuScenesDataset(BaseDataset):
                 # t4 = time.time()
                 
                 # full_points, time_lags = self.read_sweep_from_info(info)
-                full_points = pc_full
-                time_lags = time_lags_full
+                full_points = radar_points
+                time_lags = radar_times
                 
                 fused_xyz = np.round(fused_pts[:, :3].astype(np.float64), 3)
                 full_xyz = np.round(full_points[:, :3].astype(np.float64), 3)
@@ -503,11 +503,11 @@ class NuScenesDataset(BaseDataset):
                 # t5 = time.time()
                 # print(f"[TIME] Padding process: {t5 - t4:.4f}s")
             else:
-                save_dir = f"/home/betty/CMU-intern/pillarnext/visualize_pointcloud/"
-                os.makedirs(save_dir, exist_ok=True)
-                filename = os.path.join(save_dir, f"{info['token']}_fused_pts.npz")
-                np.savez_compressed(filename, fused_pts.astype(np.float32))
-                print(f"Saved {info['token']}_fused_pts.npz with shape {fused_pts.shape}")
+                # save_dir = f"/home/betty/CMU-intern/pillarnext/visualize_pointcloud/"
+                # os.makedirs(save_dir, exist_ok=True)
+                # filename = os.path.join(save_dir, f"{info['token']}_fused_pts.npz")
+                # np.savez_compressed(filename, fused_pts.astype(np.float32))
+                # print(f"Saved {info['token']}_fused_pts.npz with shape {fused_pts.shape}")
                 res["points"] = fused_pts.astype(np.float32)
 
             # print(f"[DEBUG] points.shape={res['points'].shape}")

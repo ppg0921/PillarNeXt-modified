@@ -9,3 +9,5 @@ outputs/
 **/*.bk
 **/*.o
 **/*.pth
+project_visualization/
+visualize_pointcloud/

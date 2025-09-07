@@ -373,8 +373,8 @@ class NuScenesDataset(BaseDataset):
                 continue    # ignore background
             
             _ = filter_paint_feats_by_dbscan_per_instance(pc_lidar=pc_lidar, inst_ids=inst_ids, paint_feats=paint_feats,
-                                                          inst_to_indices=inst_to_indices, eps=0.3, min_samples=5, 
-                                                          selection_mode="largest", cluster_dims="xy")
+                                                          inst_to_indices=inst_to_indices, eps=0.45, min_samples=5, 
+                                                          selection_mode="largest", cluster_dims="xyz")
 
         # print(f"[FUSION DEBUG] fused_pc shape: {fused_pc.shape}\n")
         fused_pc = np.hstack([pc_lidar, time_lags_cam, paint_feats]).astype(np.float32, copy=False)

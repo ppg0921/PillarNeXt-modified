@@ -497,9 +497,9 @@ def create_nuscenes_infos(root_path, version="v1.0-trainval", nsweeps=10):
     else:
         print(
             f"train sample: {len(train_nusc_infos)}, val sample: {len(val_nusc_infos)}")
-        with open(root_path / "infos_train_{:02d}sweeps_withvelo_filterZero.pkl".format(nsweeps), "wb") as f:
+        with open(root_path / "infos_train_{:02d}sweeps_withvelo_filterZero_painted.pkl".format(nsweeps), "wb") as f:
             pickle.dump(train_nusc_infos, f)
-        with open(root_path / "infos_val_{:02d}sweeps_withvelo_filterZero.pkl".format(nsweeps), "wb") as f:
+        with open(root_path / "infos_val_{:02d}sweeps_withvelo_filterZero_painted.pkl".format(nsweeps), "wb") as f:
             pickle.dump(val_nusc_infos, f)
 
 

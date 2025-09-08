@@ -6,11 +6,11 @@ import torch.multiprocessing as mp
 
 
 def nuscenes_data_prep(root_path, painted_path, version="v1.0-trainval", nsweeps=10, fuse_camera=False, cam_name="CAM_FRONT", padding=True):
-    print("here")
+    # print("here")
     create_nuscenes_infos(root_path, version=version, nsweeps=nsweeps)
     create_groundtruth_database('NUSC', 
                                 root_path, 
-                                'infos_train_10sweeps_withvelo_filterZero.pkl',
+                                'infos_train_10sweeps_withvelo_filterZero_xyclustered.pkl',
                                 painted_path=painted_path,
                                 nsweeps=nsweeps,
                                 version=version,

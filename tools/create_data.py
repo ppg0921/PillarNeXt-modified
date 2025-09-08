@@ -8,7 +8,7 @@ def nuscenes_data_prep(root_path, painted_path, version="v1.0-trainval", nsweeps
     create_nuscenes_infos(root_path, version=version, nsweeps=nsweeps)
     create_groundtruth_database('NUSC', 
                                 root_path, 
-                                'infos_train_10sweeps_withvelo_filterZero.pkl',
+                                'infos_train_10sweeps_withvelo_filterZero_paintedradar.pkl',
                                 painted_path=painted_path,
                                 nsweeps=nsweeps,
                                 version=version,

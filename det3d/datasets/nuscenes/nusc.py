@@ -366,18 +366,18 @@ class NuScenesDataset(BaseDataset):
             inst_to_indices[int(iid)] = idxs    # build lists of grouped indices
             
         inst_cluster_results = {}
-        for iid, idxs in inst_to_indices.items():
-            if idxs.size == 0:
-                continue
-            if iid == 0:
-                continue    # ignore background
-            
-            _ = paint_by_DBSCAN_per_instance(pc_lidar=pc_lidar, inst_ids=inst_ids, paint_feats=paint_feats,
-                                                          inst_to_indices=inst_to_indices, eps=0.3, min_samples=5, 
-                                                          selection_mode="largest", cluster_dims="xy")
+        # for iid, idxs in inst_to_indices.items():
+        #     if idxs.size == 0:
+        #         continue
+        #     if iid == 0:
+        #         continue    # ignore background
+
+        _, pc_lidar_aug, paint_feats_aug, inst_ids_aug, time_lags_aug = paint_by_DBSCAN_per_instance(pc_lidar=pc_lidar, inst_ids=inst_ids, paint_feats=paint_feats, time_lags=time_lags_cam,
+                                                          inst_to_indices=inst_to_indices, eps=0.3, min_samples=5,
+                                                          selection_mode="largest", cluster_dims="xy", upsample_pairs_per_instance=10)
 
         # print(f"[FUSION DEBUG] fused_pc shape: {fused_pc.shape}\n")
-        fused_pc = np.hstack([pc_lidar, time_lags_cam, paint_feats]).astype(np.float32, copy=False)
+        fused_pc = np.hstack([pc_lidar_aug, time_lags_aug, paint_feats_aug]).astype(np.float32, copy=False)
         return fused_pc
 
     def load_pointcloud(self, res, info):

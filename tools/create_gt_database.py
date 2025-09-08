@@ -62,10 +62,10 @@ def create_groundtruth_database(
 
     if dataset_name in ["WAYMO", "NUSC"]:
         if db_path is None:
-            db_path = root_path / f"gt_database_{nsweeps}sweeps_withvelo_xyclustered"
+            db_path = root_path / f"gt_database_{nsweeps}sweeps_withvelo_upsampled"
         if dbinfo_path is None:
             dbinfo_path = root_path / \
-                f"dbinfos_train_{nsweeps}sweeps_withvelo_xyclustered.pkl"
+                f"dbinfos_train_{nsweeps}sweeps_withvelo_upsampled.pkl"
     else:
         raise NotImplementedError()
 

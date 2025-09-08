@@ -8,6 +8,7 @@ def paint_by_DBSCAN_per_instance(
     pc_lidar: np.ndarray,
     inst_ids: np.ndarray,
     paint_feats: np.ndarray,
+    time_lags: np.ndarray,  
     inst_to_indices: dict[int, np.ndarray],
     eps: float = 0.4,
     min_samples: int = 5,
@@ -15,7 +16,8 @@ def paint_by_DBSCAN_per_instance(
     include_background: bool = False,
     treat_noise_as_cluster: bool = False,
     selection_mode: str = "closest",
-    cluster_dims: str = "xyz"
+    cluster_dims: str = "xyz",
+    upsample_pairs_per_instance: int = 10
 ):
     """
     For each instance id, run DBSCAN on the instance's LiDAR xyz, keep ONLY the cluster
@@ -53,13 +55,14 @@ def paint_by_DBSCAN_per_instance(
         Labels are NOT global across instances; they restart at 0 per instance.
     """
 
-    Nf = pc_lidar.shape[0]    # number of lidar point clouds
+    Nf, D = pc_lidar.shape    # number of lidar point clouds
     cluster_labels_out = np.full((Nf,), -1, dtype=np.int32)
     proc_mask = (inst_ids > 0)
+    time_lags_reshaped = time_lags.reshape(-1).astype(np.float32, copy=False)
 
     if not proc_mask.any():
-        return cluster_labels_out
-    
+        return cluster_labels_out, pc_lidar, paint_feats, inst_ids, time_lags_reshaped
+
     if cluster_dims == "xy":
         coords = pc_lidar[proc_mask, :2].astype(np.float32, copy=False)
     else:
@@ -100,7 +103,7 @@ def paint_by_DBSCAN_per_instance(
         
         cand = np.unique(lbls)
         cand = cand[cand != -1] if not treat_noise_as_cluster else cand
-        
+
         if cand.size == 0:
             # all noise
             continue
@@ -145,5 +148,59 @@ def paint_by_DBSCAN_per_instance(
         labels_np[loc] = lbls_norm
     
     cluster_labels_out[proc_idx_global] = labels_np
-    return cluster_labels_out
+    
+    # upsampling
+    rng = np.random.default_rng(seed=42)
+    new_points = []
+    new_feats = []
+    new_inst = []
+    new_labels = []
+    new_times = []
+    
+    for iid, loc in inst_to_local.items():
+        if loc.size == 0:
+            continue
+        
+        global_idxs = proc_idx_global[loc]
+        chosen_idxs_mask = (labels_np[loc] == 0)
+        chosen_global_idxs = global_idxs[chosen_idxs_mask]
+        if chosen_global_idxs.size < 2: # need 2 points for averaging
+            continue
+        
+        paint_feats_mean = paint_feats[chosen_global_idxs].mean(axis=0, dtype = np.float32)
+        num_pairs = upsample_pairs_per_instance
+        idx1 = rng.integer(0, chosen_global_idxs.size, size=num_pairs, endpoint=False)
+        idx2 = rng.integer(0, chosen_global_idxs.size, size=num_pairs, endpoint=False)
+        
+        p1 = pc_lidar[chosen_global_idxs[idx1], :]
+        p2 = pc_lidar[chosen_global_idxs[idx2], :]
+        p_avg = (p1 + p2) / 2.0
+        t_avg = (time_lags_reshaped[chosen_global_idxs[idx1]] + time_lags_reshaped[chosen_global_idxs[idx2]]) / 2.0
+
+        new_points.append(p_avg.astype(pc_lidar.dtype, copy=False))
+        new_feats.append(np.repeat(paint_feats_mean[None, :], num_pairs, axis=0))
+        new_inst.append(np.full((num_pairs,), iid, dtype=inst_ids.dtype))
+        new_labels.append(np.zeros((num_pairs,), dtype=cluster_labels_out.dtype))   # kept cluster label = 0
+        new_times.append(t_avg.astype(time_lags.dtype, copy=False))
+        
+    if new_points:
+        pc_new = np.vstack(new_points)
+        paint_feats_new = np.vstack(new_feats).astype(paint_feats.dtype, copy=False)
+        inst_new = np.concatenate(new_inst)
+        lbl_new = np.concatenate(new_labels)
+        t_new = np.concatenate(new_times)
+        
+        pc_lidar_aug = np.vstack((pc_lidar, pc_new))
+        paint_feats_aug = np.vstack((paint_feats, paint_feats_new))
+        inst_ids_aug = np.concatenate((inst_ids, inst_new))
+        time_lags_aug = np.concatenate((time_lags_reshaped, t_new))
+        cluster_labels_out_aug = np.concatenate((cluster_labels_out, lbl_new))
+    else:
+        pc_lidar_aug = pc_lidar
+        paint_feats_aug = paint_feats
+        inst_ids_aug = inst_ids
+        time_lags_aug = time_lags_reshaped
+        cluster_labels_out_aug = cluster_labels_out
+
+    return cluster_labels_out_aug, pc_lidar_aug, paint_feats_aug, inst_ids_aug, time_lags_aug
 

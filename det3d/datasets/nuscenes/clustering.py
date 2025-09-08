@@ -4,7 +4,7 @@ from sklearn.cluster import DBSCAN
 import cupy as cp
 import cudf
 
-def filter_paint_feats_by_dbscan_per_instance(
+def paint_by_DBSCAN_per_instance(
     pc_lidar: np.ndarray,
     inst_ids: np.ndarray,
     paint_feats: np.ndarray,

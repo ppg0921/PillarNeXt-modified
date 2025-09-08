@@ -11,7 +11,7 @@ from os import path
 import time
 from functools import lru_cache
 import cv2
-from det3d.datasets.nuscenes.clustering import filter_paint_feats_by_dbscan_per_instance
+from det3d.datasets.nuscenes.clustering import paint_by_DBSCAN_per_instance
 
 @lru_cache(maxsize=4096)
 def _load_paint_npz(npz_path):
@@ -372,7 +372,7 @@ class NuScenesDataset(BaseDataset):
             if iid == 0:
                 continue    # ignore background
             
-            _ = filter_paint_feats_by_dbscan_per_instance(pc_lidar=pc_lidar, inst_ids=inst_ids, paint_feats=paint_feats,
+            _ = paint_by_DBSCAN_per_instance(pc_lidar=pc_lidar, inst_ids=inst_ids, paint_feats=paint_feats,
                                                           inst_to_indices=inst_to_indices, eps=0.3, min_samples=5, 
                                                           selection_mode="largest", cluster_dims="xy")
 

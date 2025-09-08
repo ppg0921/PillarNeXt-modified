@@ -231,7 +231,7 @@ class NuScenesDataset(BaseDataset):
         pc_cam = np.array(pc_full).T
         # print(f"[DEBUG] Loaded pointcloud with shape {pc.shape}\n")
         # pc_cam_old = LidarPointCloud(pc_cam.copy())
-        pc_cam = LidarPointCloud(pc_cam)
+        pc_cam = LidarPointCloud(pc_cam[:4, :])
         
         # t3 = time.time()
         # print(f"[TIME][{cam_name}] pointcloud creation: {t3 - t25:.4f}s")

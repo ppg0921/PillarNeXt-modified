@@ -61,7 +61,8 @@ def paint_by_DBSCAN_per_instance(
     time_lags_reshaped = time_lags.reshape(-1).astype(np.float32, copy=False)
 
     if not proc_mask.any():
-        return cluster_labels_out, pc_lidar, paint_feats, inst_ids, time_lags_reshaped
+        # print("No foreground points to process")
+        return cluster_labels_out, pc_lidar, paint_feats, inst_ids, time_lags_reshaped.reshape(-1, 1)
 
     if cluster_dims == "xy":
         coords = pc_lidar[proc_mask, :2].astype(np.float32, copy=False)
@@ -169,8 +170,8 @@ def paint_by_DBSCAN_per_instance(
         
         paint_feats_mean = paint_feats[chosen_global_idxs].mean(axis=0, dtype = np.float32)
         num_pairs = upsample_pairs_per_instance
-        idx1 = rng.integer(0, chosen_global_idxs.size, size=num_pairs, endpoint=False)
-        idx2 = rng.integer(0, chosen_global_idxs.size, size=num_pairs, endpoint=False)
+        idx1 = rng.integers(0, chosen_global_idxs.size, size=num_pairs, endpoint=False)
+        idx2 = rng.integers(0, chosen_global_idxs.size, size=num_pairs, endpoint=False)
         
         p1 = pc_lidar[chosen_global_idxs[idx1], :]
         p2 = pc_lidar[chosen_global_idxs[idx2], :]
@@ -201,6 +202,6 @@ def paint_by_DBSCAN_per_instance(
         inst_ids_aug = inst_ids
         time_lags_aug = time_lags_reshaped
         cluster_labels_out_aug = cluster_labels_out
-
-    return cluster_labels_out_aug, pc_lidar_aug, paint_feats_aug, inst_ids_aug, time_lags_aug
+    # print("clustered")
+    return cluster_labels_out_aug, pc_lidar_aug, paint_feats_aug, inst_ids_aug, time_lags_aug.reshape(-1, 1)
 

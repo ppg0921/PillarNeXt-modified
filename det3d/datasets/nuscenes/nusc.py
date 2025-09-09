@@ -463,11 +463,11 @@ class NuScenesDataset(BaseDataset):
                 # t5 = time.time()
                 # print(f"[TIME] Padding process: {t5 - t4:.4f}s")
             else:
-                save_dir = f"/home/betty/CMU-intern/pillarnext/visualize_pointcloud/upsampled"
-                os.makedirs(save_dir, exist_ok=True)
-                filename = os.path.join(save_dir, f"{info['token']}_fused_pts.npz")
-                np.savez_compressed(filename, fused_pts.astype(np.float32))
-                print(f"Saved {info['token']}_fused_pts.npz with shape {fused_pts.shape}")
+                # save_dir = f"/home/betty/CMU-intern/pillarnext/visualize_pointcloud/upsampled"
+                # os.makedirs(save_dir, exist_ok=True)
+                # filename = os.path.join(save_dir, f"{info['token']}_fused_pts.npz")
+                # np.savez_compressed(filename, fused_pts.astype(np.float32))
+                # print(f"Saved {info['token']}_fused_pts.npz with shape {fused_pts.shape}")
                 res["points"] = fused_pts.astype(np.float32)
 
             # print(f"[DEBUG] points.shape={res['points'].shape}")

@@ -164,26 +164,49 @@ def paint_by_DBSCAN_per_instance(
         
         global_idxs = proc_idx_global[loc]
         chosen_idxs_mask = (labels_np[loc] == 0)
+        unchosen_idxs_mask = ~chosen_idxs_mask
         chosen_global_idxs = global_idxs[chosen_idxs_mask]
-        if chosen_global_idxs.size < 2: # need 2 points for averaging
+        unchosen_global_idxs = global_idxs[unchosen_idxs_mask]
+        if chosen_global_idxs.size == 0:
             continue
         
         paint_feats_mean = paint_feats[chosen_global_idxs].mean(axis=0, dtype = np.float32)
         num_pairs = upsample_pairs_per_instance
-        idx1 = rng.integers(0, chosen_global_idxs.size, size=num_pairs, endpoint=False)
-        idx2 = rng.integers(0, chosen_global_idxs.size, size=num_pairs, endpoint=False)
-        
-        p1 = pc_lidar[chosen_global_idxs[idx1], :]
-        p2 = pc_lidar[chosen_global_idxs[idx2], :]
-        p_avg = (p1 + p2) / 2.0
-        t_avg = (time_lags_reshaped[chosen_global_idxs[idx1]] + time_lags_reshaped[chosen_global_idxs[idx2]]) / 2.0
+        w_in, w_out = 0.99, 0.01
+        if unchosen_global_idxs.size > 0:
+            idx1 = rng.integers(0, chosen_global_idxs.size, size=num_pairs, endpoint=False)
+            idx2 = rng.integers(0, unchosen_global_idxs.size, size=num_pairs, endpoint=False)
+            
+            p1 = pc_lidar[chosen_global_idxs[idx1], :]
+            p2 = pc_lidar[unchosen_global_idxs[idx2], :]
+            t1 = time_lags_reshaped[chosen_global_idxs[idx1]]
+            t2 = time_lags_reshaped[unchosen_global_idxs[idx2]]
+            new_feats.append(np.repeat(paint_feats_mean[None, :], num_pairs, axis=0))
+            new_inst.append(np.full((num_pairs,), iid, dtype=inst_ids.dtype))
+            new_labels.append(np.zeros((num_pairs,), dtype=cluster_labels_out.dtype))  
 
-        new_points.append(p_avg.astype(pc_lidar.dtype, copy=False))
-        new_feats.append(np.repeat(paint_feats_mean[None, :], num_pairs, axis=0))
-        new_inst.append(np.full((num_pairs,), iid, dtype=inst_ids.dtype))
-        new_labels.append(np.zeros((num_pairs,), dtype=cluster_labels_out.dtype))   # kept cluster label = 0
-        new_times.append(t_avg.astype(time_lags.dtype, copy=False))
-        
+        else:
+            num_pairs_intra = num_pairs//2
+            if chosen_global_idxs.size < 2:
+                continue
+            idx1 = rng.integers(0, chosen_global_idxs.size, size=num_pairs_intra)
+            idx2 = rng.integers(0, chosen_global_idxs.size, size=num_pairs_intra)
+            
+            p1 = pc_lidar[chosen_global_idxs[idx1], :]
+            p2 = pc_lidar[chosen_global_idxs[idx2], :]
+            t1 = time_lags_reshaped[chosen_global_idxs[idx1]]
+            t2 = time_lags_reshaped[chosen_global_idxs[idx2]]
+            # p_weighted_avg = ((p1 + p2) * 0.5).astype(pc_lidar.dtype, copy=False)
+            # t_weighted_avg = ((t1 + t2) * 0.5).astype(time_lags.dtype, copy=False)
+            new_feats.append(np.repeat(paint_feats_mean[None, :], num_pairs_intra, axis=0))
+            new_inst.append(np.full((num_pairs_intra,), iid, dtype=inst_ids.dtype))
+            new_labels.append(np.zeros((num_pairs_intra,), dtype=cluster_labels_out.dtype))  
+        p_weighted_avg = (w_in * p1 + w_out * p2).astype(pc_lidar.dtype, copy=False)
+        t_weighted_avg = (w_in * t1 + w_out * t2).astype(time_lags.dtype, copy=False)
+        new_points.append(p_weighted_avg.astype(pc_lidar.dtype, copy=False))
+         # kept cluster label = 0
+        new_times.append(t_weighted_avg.astype(time_lags.dtype, copy=False))
+
     if new_points:
         pc_new = np.vstack(new_points)
         paint_feats_new = np.vstack(new_feats).astype(paint_feats.dtype, copy=False)

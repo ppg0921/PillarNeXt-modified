@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 @hydra.main(config_path='../configs/experiments')
 def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
-
+    print("CURRENT VERSION: PAINT!!!!!!")
     # distributed training
     distributed = False
     if "WORLD_SIZE" in os.environ:

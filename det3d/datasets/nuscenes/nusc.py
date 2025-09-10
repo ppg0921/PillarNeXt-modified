@@ -12,6 +12,8 @@ import time
 from functools import lru_cache
 import cv2
 from det3d.datasets.nuscenes.clustering import filter_paint_feats_by_dbscan_per_instance
+from det3d.datasets.nuscenes.fusion_utils import build_depth_map, atomic_save_npz
+from tqdm import tqdm
 
 @lru_cache(maxsize=4096)
 def _load_paint_npz(npz_path):
@@ -50,7 +52,8 @@ class NuScenesDataset(BaseDataset):
                  fuse_camera=False,
                  cam_name="CAM_FRONT",
                  padding=True,
-                 painted_path=None):
+                 painted_path=None,
+                 depth_path=None):
 
         super(NuScenesDataset, self).__init__(
             root_path, info_path, sampler, loading_pipelines, augmentation, prepare_label, evaluations, create_database,
@@ -67,6 +70,7 @@ class NuScenesDataset(BaseDataset):
         self.nusc = NuScenes(version=self.version, dataroot=str(
             self._root_path), verbose=False)
         self.painted_path = painted_path
+        self.depth_path = depth_path
         self.paint_K = 10
 
         if resampling:
@@ -240,7 +244,8 @@ class NuScenesDataset(BaseDataset):
                                 cam_name='CAM_FRONT', pc_full=None, time_lags_full=None,
                                 min_dist=1.0,
                                 nsweeps=10,
-                                fuse_camera=True):
+                                fuse_camera=True,
+                                save_upsampling=False):
         """
         Loads points from lidar pointcloud, finds the points that are within a
         camera's FOV, and the color of the corresponding points in the camera's
@@ -273,8 +278,7 @@ class NuScenesDataset(BaseDataset):
         pc_cam, pc_lidar, time_lags_cam = self.load_and_transform_lidar_to_cam(nusc, sample, info, cam_name=cam_name, 
                                                                        pc_full=pc_full, time_lags_full=time_lags_full,
                                                                        nsweeps=nsweeps)
-        # t1 = time.time()
-        # print(f"[TIME][{cam_name}] load_and_transform_lidar_to_cam: {t1 - t0:.4f}s")
+
         # pc is already in the type of PointCloud
         # pc = PointCloud(pc)
         # pc now is in the camera reference frame
@@ -293,7 +297,6 @@ class NuScenesDataset(BaseDataset):
         p_points, mask = project_points(pc_cam.points[:3, :],
                                         np.array(cs_record['camera_intrinsic']),
                                         (W_img, H_img), min_dist)
-        # depths = depths[mask]
         p_points = p_points[:, mask]    # projected points
         # pc.points = pc.points[:, mask]  # masked points in camera FOV
         # time_lags = time_lags[:, mask]
@@ -334,12 +337,29 @@ class NuScenesDataset(BaseDataset):
         # im_arr = np.asarray(im)  # shape (H, W, C)
 
         except FileNotFoundError:
-            # Missing .npz: fall back to zeros so pipeline can continue
+            # Missing .npz
             print(f"[WARN] paint file missing for {camera_token}: {npz_path}")
             K = getattr(self, 'paint_K', 10)
             Nf = pc_lidar.shape[0]
             paint_feats = np.zeros((pc_lidar.shape[0], K), dtype=np.float32)
             inst_ids = np.zeros((Nf,), dtype=np.int32)
+        
+        npz_path = os.path.join(self.depth_path, f"{camera_token}.npz")
+        depths_cam = pc_cam.points[2, mask]  # shape (Nf,)
+        if save_upsampling:
+            depth_map = build_depth_map(
+                p_points=p_points[:2, :],            # (2, Nf) projected pixel coords (float)
+                depths_cam=depths_cam,        # (Nf,) camera-Z depths
+                H_img=H_img,
+                W_img=W_img,
+                inst_map=inst_map,
+                window=11,
+                far_depth=100.0
+            )
+            atomic_save_npz(npz_path, depth=depth_map.astype(np.float32))
+        else:
+            data = np.load(npz_path)
+            depth_map = data['depth']
 
         # 3. Keep idxs within [0..W-1] and [0..H-1]
         # xs = np.clip(xs, 0, im_arr.shape[1] - 1)
@@ -352,25 +372,6 @@ class NuScenesDataset(BaseDataset):
 
         # fused_pc = np.vstack([pc.points, time_lags, colors]).T
         
-        
-        uniq_iids, inv = np.unique(inst_ids, return_inverse=True)   # sorted array of unique instance ids
-        # inv: integer array of length N where each entry tells you which unique id bucket that point belongs to
-        inst_to_indices = {}
-        for u_i, iid in enumerate(uniq_iids):
-            idxs = np.nonzero(inv == u_i)[0]
-            inst_to_indices[int(iid)] = idxs    # build lists of grouped indices
-            
-        inst_cluster_results = {}
-        for iid, idxs in inst_to_indices.items():
-            if idxs.size == 0:
-                continue
-            if iid == 0:
-                continue    # ignore background
-            
-            _ = filter_paint_feats_by_dbscan_per_instance(pc_lidar=pc_lidar, inst_ids=inst_ids, paint_feats=paint_feats,
-                                                          inst_to_indices=inst_to_indices, eps=0.4, min_samples=5)
-
-        # print(f"[FUSION DEBUG] fused_pc shape: {fused_pc.shape}\n")
         fused_pc = np.hstack([pc_lidar, time_lags_cam, paint_feats]).astype(np.float32, copy=False)
         return fused_pc
 
@@ -461,6 +462,36 @@ class NuScenesDataset(BaseDataset):
 
             # print(f"[DEBUG] points.shape={res['points'].shape}")
             return res
+    
+    def upsampling(self, res, info):
+        # t_load_start = time.time()
+        all_cam_names = [
+            "CAM_FRONT", "CAM_FRONT_LEFT", "CAM_FRONT_RIGHT",
+            "CAM_BACK", "CAM_BACK_LEFT", "CAM_BACK_RIGHT"
+        ]
+        
+        sample = self.nusc.get('sample', info['token'])
+
+        pc_full, time_lags_full = self.read_sweep_from_info(info)
+        for cam in all_cam_names:
+            # t_get_fused_pc_start = time.time()
+            _ = self.get_camera_fused_pointcloud(
+                nusc= self.nusc, sample= sample, info= info,
+                cam_name= cam, pc_full= pc_full, time_lags_full= time_lags_full,
+                min_dist= 1.0, nsweeps= self.nsweeps,
+                fuse_camera= self.fuse_camera, save_upsampling=True
+            )
+
+        # print(f"[DEBUG] points.shape={res['points'].shape}")
+        return res
+    
+    def upsampling_all(self):
+        # t0 = time.time()
+        for idx in tqdm(range(len(self.infos))):
+            info = self.infos[idx]
+            res = {"token": info["token"]}
+            _ = self.upsampling(res, info)
+        
 
     def evaluation(self, detections, output_dir=None, testset=False):
         version = self.version

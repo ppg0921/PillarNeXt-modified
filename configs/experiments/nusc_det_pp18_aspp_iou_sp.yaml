@@ -94,6 +94,7 @@ data:
     padding: False
     cam_name: 'CAM_FRONT'
     painted_path: ${data.train_dataset.painted_path}
+    depth_path: ${data.train_dataset.depth_path}
   val_dataset:
     class_names: ${_tasks}
     version: ${data.train_dataset.version}
@@ -101,4 +102,5 @@ data:
     padding: False
     cam_name: 'CAM_FRONT'
     painted_path: ${data.train_dataset.painted_path}
+    depth_path: ${data.train_dataset.depth_path}
 

@@ -17,6 +17,7 @@ warnings.filterwarnings("ignore")
 @hydra.main(config_path='../configs/experiments')
 def main(cfg: DictConfig):
     OmegaConf.resolve(cfg)
+    print("CURRENT VERSION: UPSAMPLING")
 
     # distributed training
     distributed = False

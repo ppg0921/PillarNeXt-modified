@@ -122,85 +122,56 @@ def box_count(mask: np.ndarray, window: int) -> np.ndarray:
     counts = I[2*h:, 2*h:] - I[:-2*h, 2*h:] - I[2*h:, :-2*h] + I[:-2*h, :-2*h]
     return counts
 
+@njit(cache=True, fastmath=True)
+def _write_segment_medians(depth_sorted, starts, lengths, py, px, depth_map):
+    for i in range(starts.size):
+        s = starts[i]
+        L = lengths[i]
+        m = L // 2
+        if (L & 1) == 1:
+            med = depth_sorted[s + m]
+        else:
+            med = 0.5 * (depth_sorted[s + m - 1] + depth_sorted[s + m])
+        depth_map[py[i], px[i]] = med
+
 def build_depth_map(
     p_points: np.ndarray,
     depths_cam: np.ndarray,
     H_img: int,
     W_img: int,
-    inst_map: np.ndarray = None,  # ignored
-    window: int = 11,             # ignored
-    far_depth: float = 100.0      # ignored
+    inst_map: np.ndarray = None,
+    window: int = 11,
+    far_depth: float = 100.0
 ) -> np.ndarray:
-    """
-    Create a per-pixel depth map where each pixel is the median depth of LiDAR
-    points that project onto it; pixels with no points remain 0.
-
-    Args:
-        p_points: (2, N) projected pixel coords (float); p_points[0]=x, p_points[1]=y.
-        depths_cam: (N,) LiDAR depths along camera Z (positive forward).
-        H_img, W_img: image height/width.
-        inst_map, window, far_depth: accepted for API compatibility; ignored.
-
-    Returns:
-        depth_map: (H_img, W_img) float32 depth map (zeros where no points).
-    """
-    assert p_points.shape[0] == 2, "p_points must be shape (2, N)"
-    assert depths_cam.ndim == 1 and depths_cam.shape[0] == p_points.shape[1], \
-        "depths_cam must be length N (matching p_points)"
-
-    # Start with all zeros
     depth_map = np.zeros((H_img, W_img), dtype=np.float32)
-
-    # Convert to pixel indices (floor to nearest lower integer pixel)
     xs = np.floor(p_points[0]).astype(np.int32)
     ys = np.floor(p_points[1]).astype(np.int32)
 
-    # Keep only points that are inside the image and have finite positive depth
     valid = (
         (xs >= 0) & (xs < W_img) &
         (ys >= 0) & (ys < H_img) &
         np.isfinite(depths_cam) & (depths_cam > 0)
     )
     if not np.any(valid):
-        return depth_map  # all zeros
+        return depth_map
 
     xs = xs[valid]
     ys = ys[valid]
     d  = depths_cam[valid].astype(np.float32)
 
-    # Group points by pixel and compute per-pixel median efficiently
-    # Map (y, x) -> linear pixel id
     pix_ids = ys.astype(np.int64) * W_img + xs.astype(np.int64)
-
-    order = np.argsort(pix_ids, kind="mergesort")  # stable sort by pixel id
-    pix_sorted = pix_ids[order]
+    order = np.argsort(pix_ids, kind="mergesort")
+    pix_sorted   = pix_ids[order]
     depth_sorted = d[order]
 
-    # Find group boundaries for each unique pixel id
     boundaries = np.flatnonzero(np.diff(pix_sorted)) + 1
-    starts = np.r_[0, boundaries]
-    ends   = np.r_[boundaries, pix_sorted.size]
-    lengths = ends - starts
+    starts = np.concatenate(([0], boundaries)).astype(np.int64)
+    ends   = np.concatenate((boundaries, [pix_sorted.size])).astype(np.int64)
+    lengths = (ends - starts).astype(np.int64)
 
     groups = pix_sorted[starts]
     py = (groups // W_img).astype(np.int64)
     px = (groups %  W_img).astype(np.int64)
 
-    # Compute medians (odd -> middle; even -> average of two middles)
-    mid = lengths // 2
-    odd = (lengths & 1) == 1
-    even = ~odd
-
-    # Odd counts
-    if np.any(odd):
-        idx_odd = starts[odd] + mid[odd]
-        depth_map[py[odd], px[odd]] = depth_sorted[idx_odd]
-
-    # Even counts
-    if np.any(even):
-        idx1 = starts[even] + mid[even] - 1
-        idx2 = starts[even] + mid[even]
-        med_even = (depth_sorted[idx1] + depth_sorted[idx2]) * 0.5
-        depth_map[py[even], px[even]] = med_even
-
+    _write_segment_medians(depth_sorted, starts, lengths, py, px, depth_map)
     return depth_map

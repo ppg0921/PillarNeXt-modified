@@ -62,7 +62,7 @@ def main():
     args = ap.parse_args()
 
     nusc = NuScenes(version=args.version, dataroot=args.nusc_root, verbose=False)
-    cam_token = "0b5e8cecbd1440b490212a2d6beae756"
+    cam_token = "0a6129c27f5643cc8c4ae011de763a1c"
     sd = nusc.get("sample_data", cam_token)
     img_path = os.path.join(nusc.dataroot, sd["filename"])
     if not os.path.isfile(img_path):

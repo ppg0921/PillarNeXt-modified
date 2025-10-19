@@ -127,58 +127,57 @@ def build_depth_map(
     depths_cam: np.ndarray,
     H_img: int,
     W_img: int,
-    inst_map: np.ndarray,
-    window: int = 11,
-    far_depth: float = 100.0
+    inst_map: np.ndarray = None,  # ignored
+    window: int = 11,             # ignored
+    far_depth: float = 100.0      # ignored
 ) -> np.ndarray:
     """
-    Create a per-pixel depth map for an image using projected LiDAR points.
+    Create a per-pixel depth map where each pixel is the median depth of LiDAR
+    points that project onto it; pixels with no points remain 0.
 
     Args:
         p_points: (2, N) projected pixel coords (float); p_points[0]=x, p_points[1]=y.
         depths_cam: (N,) LiDAR depths along camera Z (positive forward).
         H_img, W_img: image height/width.
-        inst_map: (H_img, W_img) integer instance IDs (0 = background).
-        window: odd integer kernel size for neighbor search (default 11).
-        far_depth: depth to use for background with no info (default 100.0).
+        inst_map, window, far_depth: accepted for API compatibility; ignored.
 
     Returns:
-        depth_map: (H_img, W_img) float32 depth map.
+        depth_map: (H_img, W_img) float32 depth map (zeros where no points).
     """
     assert p_points.shape[0] == 2, "p_points must be shape (2, N)"
     assert depths_cam.ndim == 1 and depths_cam.shape[0] == p_points.shape[1], \
         "depths_cam must be length N (matching p_points)"
-    assert inst_map.shape == (H_img, W_img), "inst_map must be H×W"
-    assert window % 2 == 1 and window >= 1, "window must be an odd >=1"
 
-    # ------------- Step 0: prepare inputs & masks -------------
-    # Clip to image bounds; keep only finite, positive depths.
+    # Start with all zeros
+    depth_map = np.zeros((H_img, W_img), dtype=np.float32)
+
+    # Convert to pixel indices (floor to nearest lower integer pixel)
     xs = np.floor(p_points[0]).astype(np.int32)
     ys = np.floor(p_points[1]).astype(np.int32)
 
+    # Keep only points that are inside the image and have finite positive depth
     valid = (
         (xs >= 0) & (xs < W_img) &
         (ys >= 0) & (ys < H_img) &
         np.isfinite(depths_cam) & (depths_cam > 0)
     )
-    if not np.any(valid):   # no valid points, fill every pixel with far_depth
-        return np.full((H_img, W_img), far_depth, dtype=np.float32)
+    if not np.any(valid):
+        return depth_map  # all zeros
 
     xs = xs[valid]
     ys = ys[valid]
-    d  = depths_cam[valid]
+    d  = depths_cam[valid].astype(np.float32)
 
-    # ------------- Step 1: median per pixel from direct LiDAR hits -------------
-    depth_map = np.full((H_img, W_img), np.nan, dtype=np.float32)
-
-    # Group depths by pixel using sorted indices for efficient median computation
+    # Group points by pixel and compute per-pixel median efficiently
+    # Map (y, x) -> linear pixel id
     pix_ids = ys.astype(np.int64) * W_img + xs.astype(np.int64)
-    order = np.argsort(pix_ids, kind="mergesort")  # stable
-    pix_sorted = pix_ids[order] # sorted pixel IDs
-    depth_sorted = d[order] # depths sorted by pixel ID
 
-    # Find segment boundaries
-    boundaries = np.flatnonzero(np.diff(pix_sorted)) + 1      # the first index of a new pixel ID
+    order = np.argsort(pix_ids, kind="mergesort")  # stable sort by pixel id
+    pix_sorted = pix_ids[order]
+    depth_sorted = d[order]
+
+    # Find group boundaries for each unique pixel id
+    boundaries = np.flatnonzero(np.diff(pix_sorted)) + 1
     starts = np.r_[0, boundaries]
     ends   = np.r_[boundaries, pix_sorted.size]
     lengths = ends - starts
@@ -186,47 +185,22 @@ def build_depth_map(
     groups = pix_sorted[starts]
     py = (groups // W_img).astype(np.int64)
     px = (groups %  W_img).astype(np.int64)
-    
+
+    # Compute medians (odd -> middle; even -> average of two middles)
     mid = lengths // 2
     odd = (lengths & 1) == 1
     even = ~odd
-    idx_odd = starts[odd] + mid[odd]
-    depth_map[py[odd], px[odd]] = depth_sorted[idx_odd]
+
+    # Odd counts
+    if np.any(odd):
+        idx_odd = starts[odd] + mid[odd]
+        depth_map[py[odd], px[odd]] = depth_sorted[idx_odd]
+
+    # Even counts
     if np.any(even):
         idx1 = starts[even] + mid[even] - 1
         idx2 = starts[even] + mid[even]
         med_even = (depth_sorted[idx1] + depth_sorted[idx2]) * 0.5
         depth_map[py[even], px[even]] = med_even
-    # Preserve a mask of pixels that got depth from step 1
-    step1_mask = np.isfinite(depth_map)
 
-    # ------------- Step 2: per-instance medians from step-1 pixels only -------------
-    inst_median = {0: float(far_depth)}  # background -> far
-    for iid in np.unique(inst_map):
-        if iid == 0:
-            continue
-        msk = (inst_map == iid) & step1_mask
-        inst_median[int(iid)] = float(np.median(depth_map[msk])) if np.any(msk) else np.nan
-
-    # ------------- Step 3: neighbor median (11×11 by default) using ONLY step-1 depths -------------
-    # We'll compute for pixels still missing depth after step 1.
-    missing = ~step1_mask
-    if np.any(missing):
-        # Count valid neighbors in the window using integral images (fast)
-        counts = box_count(step1_mask, window)  # per-pixel counts of valid step-1 neighbors
-        need_neighbors = missing & (counts > 0)
-
-        if np.any(need_neighbors):
-            base = depth_map.copy()  # only step-1 values are finite
-            my, mx = np.where(need_neighbors)
-            fills = fill_missing_with_local_median(base, my.astype(np.int64), mx.astype(np.int64), window)
-            depth_map[my, mx] = fills
-
-    # ------------- Step 4: final fill by background/instance fallback -------------
-    missing = ~np.isfinite(depth_map)
-    if np.any(missing):
-        inst_ids_missing = inst_map[missing].astype(int)
-        inst_fallback = np.array([inst_median.get(iid, np.nan) for iid in inst_ids_missing], dtype=np.float32)
-        depth_map[missing] = np.where(np.isfinite(inst_fallback), inst_fallback, far_depth).astype(np.float32)
-
-    return depth_map.astype(np.float32)
+    return depth_map

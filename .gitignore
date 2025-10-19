@@ -11,3 +11,4 @@ outputs/
 **/*.pth
 project_visualization/
 visualize_pointcloud/
+**/visualization/**

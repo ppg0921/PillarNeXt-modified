@@ -312,7 +312,7 @@ class NuScenesDataset(BaseDataset):
             # Get colors of the projected points from the RGB image
         npz_path = os.path.join(self.painted_path, f"{camera_token}.npz")
         paint_feats = None
-        inst_ids = None
+        # inst_ids = None
         
         try:
             data = _load_paint_npz(npz_path) if '_load_paint_npz' in globals() else np.load(npz_path)
@@ -333,7 +333,7 @@ class NuScenesDataset(BaseDataset):
             xs = p_points[0].astype(np.int32)   # floor all values
             ys = p_points[1].astype(np.int32)
             paint_feats = S[ys, xs, :].astype(np.float32, copy=False)
-            inst_ids = inst_map[ys, xs].astype(np.int32, copy=False)
+            # inst_ids = inst_map[ys, xs].astype(np.int32, copy=False)
         # im_arr = np.asarray(im)  # shape (H, W, C)
 
         except FileNotFoundError:
@@ -342,7 +342,7 @@ class NuScenesDataset(BaseDataset):
             K = getattr(self, 'paint_K', 10)
             Nf = pc_lidar.shape[0]
             paint_feats = np.zeros((pc_lidar.shape[0], K), dtype=np.float32)
-            inst_ids = np.zeros((Nf,), dtype=np.int32)
+            # inst_ids = np.zeros((Nf,), dtype=np.int32)
         
         npz_path = os.path.join(self.depth_path, f"{camera_token}.npz")
         depths_cam = pc_cam.points[2, mask]  # shape (Nf,)
@@ -351,10 +351,7 @@ class NuScenesDataset(BaseDataset):
                 p_points=p_points[:2, :],            # (2, Nf) projected pixel coords (float)
                 depths_cam=depths_cam,        # (Nf,) camera-Z depths
                 H_img=H_img,
-                W_img=W_img,
-                inst_map=inst_map,
-                window=11,
-                far_depth=100.0
+                W_img=W_img
             )
             atomic_save_npz(npz_path, depth=depth_map.astype(np.float32))
         else:

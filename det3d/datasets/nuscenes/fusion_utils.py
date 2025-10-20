@@ -138,10 +138,7 @@ def build_depth_map(
     p_points: np.ndarray,
     depths_cam: np.ndarray,
     H_img: int,
-    W_img: int,
-    inst_map: np.ndarray = None,
-    window: int = 11,
-    far_depth: float = 100.0
+    W_img: int
 ) -> np.ndarray:
     depth_map = np.zeros((H_img, W_img), dtype=np.float32)
     xs = np.floor(p_points[0]).astype(np.int32)
